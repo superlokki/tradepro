@@ -46,12 +46,8 @@ JDK 17 or later required; the jar is compiled for Java 17, like the official exa
 
 Both compile against the API of the local installation (`C:\Program Files\Bookmap\lib`) and set up fast reload. If Bookmap is installed elsewhere: `.\gradlew.bat jar -PbookmapLib="D:/Bookmap/lib"` or `build.ps1 -BookmapLib 'D:\Bookmap\lib'`.
 
-### Tests
-Position tracking (`PositionTracker`) and price conversions (`PriceGrid`) do not depend on Bookmap and have their own tests:
-
-    .\gradlew.bat test
-
-The rest (mouse, drawing, order sending) is checked by hand in Bookmap, in replay or simulation: place, move, cancel, reload.
+### Testing
+The add-on is checked by hand in Bookmap, in replay or simulation: place, move, cancel, reload.
 
 ### Fast reload (during development)
 To avoid renaming the jar on every try:

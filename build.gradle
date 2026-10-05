@@ -21,27 +21,14 @@ tasks.withType(JavaCompile) {
     options.release = 17
 }
 
-repositories { mavenCentral() }       // uniquement pour JUnit : l'add-on lui-même n'a aucune dépendance téléchargée
-
 dependencies {
-    // Fournies par Bookmap au runtime -> compileOnly
+    // Fournies par Bookmap au runtime -> compileOnly : l'add-on n'a aucune dépendance téléchargée
     compileOnly files("$bookmapLib/bm-l1api.jar", "$bookmapLib/bm-simplified-api-wrapper.jar")
-
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-}
-
-// Tests de PriceGrid et PositionTracker, qui ne dépendent pas de Bookmap : .\gradlew.bat test
-test {
-    useJUnitPlatform()
-    testLogging { events 'passed', 'failed', 'skipped' }
 }
 
 // Mêmes emplacements que build.ps1 : classes dans build/classes, jar à la racine du projet.
 def classesDir = layout.buildDirectory.dir('classes')
 sourceSets.main.java.destinationDirectory = classesDir
-// Les classes de test sortent ailleurs : l'extension Java de VS Code refuse un dossier de sortie imbriqué dans un autre.
-sourceSets.test.java.destinationDirectory = layout.buildDirectory.dir('test-classes')
 
 // Rechargement rapide : charger ce fichier vide dans Bookmap lui fait lire les classes directement dans build/classes.
 def marker = 'bm-strategy-package-fs-root.jar'

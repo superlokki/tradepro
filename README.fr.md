@@ -45,11 +45,7 @@ JDK 17 ou plus requis ; le jar est compilé en Java 17, comme les exemples offic
 Les deux compilent contre l'API de l'installation locale (`C:\Program Files\Bookmap\lib`) et préparent le rechargement rapide. Si Bookmap est installé ailleurs : `.\gradlew.bat jar -PbookmapLib="D:/Bookmap/lib"` ou `build.ps1 -BookmapLib 'D:\Bookmap\lib'`.
 
 ### Tests
-Le suivi de position (`PositionTracker`) et les conversions de prix (`PriceGrid`) ne dépendent pas de Bookmap et ont leurs tests :
-
-    .\gradlew.bat test
-
-Le reste (souris, dessin, envoi des ordres) se vérifie à la main dans Bookmap, en replay ou en simulation : poser, déplacer, annuler, recharger.
+L'add-on se vérifie à la main dans Bookmap, en replay ou en simulation : poser, déplacer, annuler, recharger.
 
 ### Rechargement rapide (pendant le développement)
 Pour ne pas changer le nom du jar à chaque essai :
