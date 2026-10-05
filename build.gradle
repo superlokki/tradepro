@@ -1,0 +1,54 @@
+plugins { id 'java' }
+
+group = 'com.tradepro'
+version = '0.1.0'
+
+// API de l'installation Bookmap locale : la version correspond toujours, et aucun téléchargement n'est nécessaire.
+// Autre emplacement : .\gradlew.bat jar -PbookmapLib="D:/Bookmap/lib"
+def bookmapLib = findProperty('bookmapLib') ?: 'C:/Program Files/Bookmap/lib'
+
+// Java 17, comme les exemples officiels : Bookmap repère l'add-on en scannant le bytecode, et son scanner (ASM)
+// ne lit pas les versions trop récentes ("No entry points found in jar").
+java {
+    // Déclaré aussi ici pour les éditeurs : sans ça, Gradle annonce le niveau du JDK installé (27),
+    // que l'extension Java de VS Code ne connaît pas encore.
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+repositories { mavenCentral() }       // uniquement pour JUnit : l'add-on lui-même n'a aucune dépendance téléchargée
+
+dependencies {
+    // Fournies par Bookmap au runtime -> compileOnly
+    compileOnly files("$bookmapLib/bm-l1api.jar", "$bookmapLib/bm-simplified-api-wrapper.jar")
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Tests de PriceGrid et PositionTracker, qui ne dépendent pas de Bookmap : .\gradlew.bat test
+test {
+    useJUnitPlatform()
+    testLogging { events 'passed', 'failed', 'skipped' }
+}
+
+// Mêmes emplacements que build.ps1 : classes dans build/classes, jar à la racine du projet.
+def classesDir = layout.buildDirectory.dir('classes')
+sourceSets.main.java.destinationDirectory = classesDir
+// Les classes de test sortent ailleurs : l'extension Java de VS Code refuse un dossier de sortie imbriqué dans un autre.
+sourceSets.test.java.destinationDirectory = layout.buildDirectory.dir('test-classes')
+
+// Rechargement rapide : charger ce fichier vide dans Bookmap lui fait lire les classes directement dans build/classes.
+def marker = 'bm-strategy-package-fs-root.jar'
+compileJava.doLast { classesDir.get().file(marker).asFile.createNewFile() }
+
+jar {
+    archiveFileName = 'tradepro.jar'
+    destinationDirectory = projectDir
+    exclude marker
+}

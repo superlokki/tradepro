@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+build/
+
+# Jars compilés (tradepro.jar, tradepro-v2.jar...) : distribués via les releases GitHub
+/*.jar
+
+# IDE
+.idea/
+*.iml
+
+# Notes internes
+REVIEW-grok.md
