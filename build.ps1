@@ -1,11 +1,15 @@
 ﻿# Compile Trade Pro contre l'API de l'installation Bookmap locale (pas besoin de Gradle).
-# Usage : powershell -ExecutionPolicy Bypass -File build.ps1 [-Name tradepro-v2.jar] [-BookmapLib 'D:\Bookmap\lib']
+# Usage : powershell -ExecutionPolicy Bypass -File build.ps1 [-Version 1.0.2] [-User BrunoF] [-BookmapLib 'D:\Bookmap\lib']
 param(
-    [string]$Name = 'tradepro.jar',                           # autre nom si Bookmap verrouille le jar chargé
+    [string]$Version = '1.0.1',                                 # version de l'add-on
+    [string]$User = 'BrunoF',                                   # nom d'utilisateur Bookmap
     [string]$BookmapLib = 'C:\Program Files\Bookmap\lib'        # dossier lib de l'installation Bookmap
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+# Nom des jars publiés : <username>_<addonName>_<addonVersion>.jar.
+# tradepro.jar est la version déjà reconnue par les serveurs Bookmap : ce script ne l'écrit jamais.
+$Name = "${User}_TradePro_${Version}.jar"
 $cp = "$BookmapLib\bm-l1api.jar;$BookmapLib\bm-simplified-api-wrapper.jar"
 $out = Join-Path $root 'build\classes'
 

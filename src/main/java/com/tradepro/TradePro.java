@@ -61,6 +61,10 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private static final Color POS = new Color(240, 180, 40);
     private static final Color POS_SHORT = new Color(171, 71, 188);
     private static final Color REFUSED = new Color(150, 40, 40);    // aperçu d'un ordre qui serait refusé, messages de refus
+    // Étiquettes au style des labels d'ordres de Bookmap ("1 STP") : fond ardoise, texte blanc. La couleur de
+    // l'élément (position, TP, SL) n'apparaît que sur sa ligne.
+    private static final Color LABEL_BG = new Color(57, 73, 82);
+    private static final Color LABEL_BG_HOT = new Color(12, 113, 160);    // bleu de survol de Bookmap : sous le pointeur ou pendant un drag
 
     /** Réglages enregistrés par Bookmap avec le workspace (un jeu par instrument). */
     @StrategySettingsVersion(currentVersion = 1, compatibleVersions = {})
@@ -69,12 +73,15 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         public int shortColor = POS_SHORT.getRGB();     // position SHORT
         public int tpColor = Handle.TP.color.getRGB();
         public int slColor = Handle.SL.color.getRGB();
+        public int labelColor = LABEL_BG.getRGB();          // fond des étiquettes
+        public int labelHoverColor = LABEL_BG_HOT.getRGB(); // fond sous le pointeur ou pendant un drag
         public boolean posDashed = false, tpDashed = false, slDashed = false;   // style des lignes
         public int posWidth = 1, tpWidth = 1, slWidth = 1;                      // épaisseur des lignes, en pixels
         public int tagPos = 50;     // position horizontale des étiquettes, en % de la zone à droite de la timeline (0 = contre la timeline, 100 = bord droit)
     }
 
     private volatile Color posColor = POS, shortColor = POS_SHORT, tpColor = Handle.TP.color, slColor = Handle.SL.color;
+    private volatile Color labelBg = LABEL_BG, labelHot = LABEL_BG_HOT;
 
     private Color colorOf(Handle h) { return h == Handle.TP ? tpColor : slColor; }
 
@@ -94,7 +101,6 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private static final int HANDLE_GAP_PX = 28;    // écart minimal entre la position et ses poignées TP / SL
     private static final int HANDLE_GRAB_PX = 13;   // demi-hauteur de la poignée, plus 1 px
     private static final int HANDLE_IDLE_ALPHA = 120;   // poignée au repos : translucide ; opaque sous le pointeur
-    private static final int ORDER_IDLE_ALPHA = 170;    // étiquette d'ordre au repos : un peu estompée, mais lisible
     private static final int NOTICE_MS = 4_000;     // durée d'affichage d'un message de refus sur le chart
     private static final long SENT_HIDE_MS = 3_000; // une poignée reste masquée le temps que son ordre apparaisse dans Bookmap
 
@@ -172,6 +178,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         multiplier = known ? info.multiplier : Double.NaN;
         tpColor = new Color(st.tpColor);
         slColor = new Color(st.slColor);
+        labelBg = new Color(st.labelColor);
+        labelHot = new Color(st.labelHoverColor);
         posDashed = st.posDashed;
         tpDashed = st.tpDashed;
         slDashed = st.slDashed;
@@ -594,7 +602,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             }
             // PnL latent au prix de sortie immédiat : le bid pour un long, l'ask pour un short
             String pnl = bboKnown() ? "  " + money(position > 0 ? bestBid : bestAsk, pos, size, position) : "";
-            tag(pos, (position > 0 ? "LONG " : "SHORT ") + size + " @ " + fmt(pos) + pnl, pc);
+            tag(pos, size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl, false, labelBg);
             // Poignée sous le pointeur (celle qu'un clic attraperait) : affichée opaque, comme un bouton survolé
             Handle hover = dragHandle != null ? dragHandle
                     : mouseIn && mouseOnLadder && dragId == null && orderNear(mouseLevel) == null
@@ -610,18 +618,21 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                         // Mauvais côté du marché : la poignée posera une limite au meilleur prix (voir insideLevel)
                         int inside = insideLevel(hd, em.buy);
                         hLine(lvl, colorOf(hd), true, Math.max(2, widthOf(hd)));
-                        tag(lvl, insideName(hd, em.buy) + " " + left + "  " + fmt(inside) + "  "
-                                + distance(inside, pos, left, position), colorOf(hd));
+                        tag(lvl, left + " " + insideName(hd, em.buy) + "  " + fmt(inside) + "  "
+                                + distance(inside, pos, left, position), false, labelHot);
                     } else {
                         Color c = refusal == null ? colorOf(hd) : REFUSED;
                         hLine(lvl, c, true, Math.max(2, widthOf(hd)));
-                        tag(lvl, hd + " " + left + "  " + fmt(lvl) + "  " + distance(lvl, pos, left, position)
-                                + (refusal == null ? "" : "  — rejected: " + refusal), c);
+                        tag(lvl, left + " " + hd + "  " + fmt(lvl) + "  " + distance(lvl, pos, left, position)
+                                + (refusal == null ? "" : "  — rejected: " + refusal), false,
+                                refusal == null ? labelHot : REFUSED);
                     }
                 } else {
-                    Color c = colorOf(hd);
-                    if (hd != hover) c = new Color(c.getRed(), c.getGreen(), c.getBlue(), HANDLE_IDLE_ALPHA);
-                    tag(handleLevel(hd), hd.toString(), c, true);
+                    Color fill = labelHot;
+                    if (hd != hover) {      // au repos : translucide, comme les boutons LMT / STP de Bookmap
+                        fill = new Color(labelBg.getRed(), labelBg.getGreen(), labelBg.getBlue(), HANDLE_IDLE_ALPHA);
+                    }
+                    tag(handleLevel(hd), hd.toString(), true, fill);
                 }
             }
         }
@@ -638,18 +649,18 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             String refusal = dragging ? refusal(modeOf(o), (int) lvl) : null;
             Handle role = Double.isNaN(pos) ? null : roleOf(o, position);
             Color c = refusal != null ? REFUSED : role != null ? colorOf(role) : o.isBuy ? BUY : SELL;
-            String name = role != null ? role.toString() : (o.isBuy ? "B " : "S ") + o.type;
+            String name = role != null ? role.toString() : (o.isBuy ? "BUY " : "SELL ") + o.type;
             int w = role != null ? widthOf(role) : 1;
             hLine(lvl, c, role != null ? dashedOf(role) : stop, hot ? w + 1 : w);
             String dist = role != null ? "  " + distance(lvl, pos, o.unfilled, position) : "";
-            tag(lvl, name + " " + o.unfilled + "  " + fmt(lvl) + dist
-                    + (refusal == null ? "" : "  — rejected: " + refusal),
-                    hot ? c : new Color(c.getRed(), c.getGreen(), c.getBlue(), ORDER_IDLE_ALPHA));
+            tag(lvl, o.unfilled + " " + name + "  " + fmt(lvl) + dist
+                    + (refusal == null ? "" : "  — rejected: " + refusal), false,
+                    refusal != null ? REFUSED : hot ? labelHot : labelBg);
         }
 
         // 2) Message de refus encore affiché
         Notice n = notice;
-        if (n != null && System.currentTimeMillis() < n.until()) tag(n.level(), n.text(), REFUSED);
+        if (n != null && System.currentTimeMillis() < n.until()) tag(n.level(), n.text(), false, REFUSED);
 
         // 3) Crosshair
         if (mouseIn && dragId == null && dragHandle == null) {
@@ -680,11 +691,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
      * Étiquette à droite de la timeline (ordre, position, poignée), centrée sur la position horizontale réglée.
      * Si elle recouvrirait une étiquette déjà placée à un prix voisin, elle est décalée à sa droite.
      */
-    private void tag(double level, String text, Color bg) { tag(level, text, bg, false); }
-
-    /** @param big étiquette plus large et plus haute : les poignées, pour être faciles à viser */
-    private void tag(double level, String text, Color bg, boolean big) {
-        Img img = labelImg(text, bg, big);
+    /**
+     * @param big    étiquette plus large et plus haute : les poignées, pour être faciles à viser
+     * @param fill   fond de l'étiquette (labelBg au repos, labelHot sous le pointeur)
+     */
+    private void tag(double level, String text, boolean big, Color fill) {
+        Img img = labelImg(text, fill, big);
         int x = tagCenter(img.w()) - img.w() / 2;
         boolean shifted = true;
         while (shifted) {
@@ -708,10 +720,11 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                 k -> new PreparedImage(dashed ? dashed(w, h, c) : solid(w, h, c)));
     }
 
-    private Img labelImg(String text, Color bg, boolean big) {
+    private Img labelImg(String text, Color fill, boolean big) {
         if (labelCache.size() > 256) labelCache.clear();
-        return labelCache.computeIfAbsent(bg.getRGB() + "|" + big + "|" + text, k -> {
-            BufferedImage img = label(text, bg, big);
+        String key = fill.getRGB() + "|" + big + "|" + text;
+        return labelCache.computeIfAbsent(key, k -> {
+            BufferedImage img = label(text, fill, big);
             return new Img(new PreparedImage(img), img.getWidth(), img.getHeight());
         });
     }
@@ -896,26 +909,26 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return new Font(Font.SANS_SERIF, Font.BOLD, (int) size);
     }
 
-    private static BufferedImage label(String text, Color bg, boolean big) {
+    /**
+     * Étiquette au style de Bookmap : rectangle arrondi, texte blanc.
+     */
+    private static BufferedImage label(String text, Color fill, boolean big) {
         BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D pg = probe.createGraphics();
         FontMetrics fm = pg.getFontMetrics(FONT);
         pg.dispose();
-        int padX = big ? 18 : 6, padY = big ? 4 : 2;
+        int padX = big ? 18 : 7, padY = big ? 4 : 2;
         int w = fm.stringWidth(text) + 2 * padX, h = fm.getHeight() + 2 * padY;
 
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setColor(bg);
+        g.setColor(fill);
         g.fillRoundRect(0, 0, w, h, 6, 6);
-        double luma = 0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue();
-        Color ink = luma > 140 ? Color.BLACK : Color.WHITE;      // lisible quelle que soit la couleur choisie
-        if (bg.getAlpha() < 255) {                               // étiquette translucide : le texte s'efface avec elle
-            ink = new Color(ink.getRed(), ink.getGreen(), ink.getBlue(), Math.min(255, bg.getAlpha() + 60));
-        }
-        g.setColor(ink);
+        // étiquette translucide (poignée au repos) : le texte s'efface avec elle
+        int ink = fill.getAlpha() < 255 ? Math.min(255, fill.getAlpha() + 80) : 255;
+        g.setColor(new Color(255, 255, 255, ink));
         g.setFont(FONT);
         g.drawString(text, padX, padY + fm.getAscent());
         g.dispose();
@@ -927,7 +940,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     // ======================================================================
     @Override
     public StrategyPanel[] getCustomSettingsPanels() {
-        StrategyPanel colors = new StrategyPanel("Colors", new GridLayout(4, 1, 6, 6));
+        StrategyPanel colors = new StrategyPanel("Colors", new GridLayout(6, 1, 6, 6));
         colors.add(new ColorsConfigItem(posColor, POS, "Long",
                 c -> { posColor = c; settingsChanged(); }));
         colors.add(new ColorsConfigItem(shortColor, POS_SHORT, "Short",
@@ -936,6 +949,10 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                 c -> { tpColor = c; settingsChanged(); }));
         colors.add(new ColorsConfigItem(slColor, Handle.SL.color, "Stop loss",
                 c -> { slColor = c; settingsChanged(); }));
+        colors.add(new ColorsConfigItem(labelBg, LABEL_BG, "Label",
+                c -> { labelBg = c; settingsChanged(); }));
+        colors.add(new ColorsConfigItem(labelHot, LABEL_BG_HOT, "Label hover",
+                c -> { labelHot = c; settingsChanged(); }));
 
         StrategyPanel lines = new StrategyPanel("Lines", new GridLayout(4, 3, 6, 6));
         lines.add(new JLabel("")); lines.add(new JLabel("Style")); lines.add(new JLabel("Width"));
@@ -960,7 +977,14 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         });
         tagsPanel.add(value);
         tagsPanel.add(slider);
-        return new StrategyPanel[] { colors, lines, tagsPanel };
+        // L'API ne donne pas à un add-on la position déjà ouverte : il ne peut que suivre celles ouvertes après son activation
+        // Une ligne par JLabel, comme les autres sections : un seul label HTML sur deux lignes était rogné en haut
+        StrategyPanel warning = new StrategyPanel("Important", new GridLayout(2, 1, 6, 6));
+        JLabel rule = new JLabel("Enable Trade Pro only when you are flat.");
+        rule.setFont(rule.getFont().deriveFont(Font.BOLD));
+        warning.add(rule);
+        warning.add(new JLabel("It cannot see a position that was opened before it was enabled."));
+        return new StrategyPanel[] { warning, colors, lines, tagsPanel };
     }
 
     /** Liste « Solid / Dashed » pour une ligne. */
@@ -990,6 +1014,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         st.shortColor = shortColor.getRGB();
         st.tpColor = tpColor.getRGB();
         st.slColor = slColor.getRGB();
+        st.labelColor = labelBg.getRGB();
+        st.labelHoverColor = labelHot.getRGB();
         st.posDashed = posDashed;
         st.tpDashed = tpDashed;
         st.slDashed = slDashed;

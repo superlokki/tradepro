@@ -1,7 +1,12 @@
 plugins { id 'java' }
 
 group = 'com.tradepro'
-version = '0.1.0'
+version = '1.0.1'
+
+// Nom des jars publiés : <username>_<addonName>_<addonVersion>.jar (username = compte Bookmap).
+// tradepro.jar, à la racine, est la version déjà reconnue par les serveurs Bookmap : le build ne l'écrit jamais.
+def addonUser = findProperty('addonUser') ?: 'BrunoF'
+def addonName = 'TradePro'
 
 // API de l'installation Bookmap locale : la version correspond toujours, et aucun téléchargement n'est nécessaire.
 // Autre emplacement : .\gradlew.bat jar -PbookmapLib="D:/Bookmap/lib"
@@ -35,7 +40,7 @@ def marker = 'bm-strategy-package-fs-root.jar'
 compileJava.doLast { classesDir.get().file(marker).asFile.createNewFile() }
 
 jar {
-    archiveFileName = 'tradepro.jar'
+    archiveFileName = "${addonUser}_${addonName}_${version}.jar"
     destinationDirectory = projectDir
     exclude marker
 }

@@ -3,9 +3,9 @@
 Couche d'affichage et de drag par-dessus le trading de Bookmap : une ligne sur la position, des poignées TP / SL à tirer, et le déplacement des ordres à la souris. L'add-on ne remplace rien : les ordres d'entrée, leur taille (TCP) et la position restent ceux de Bookmap.
 
 ## Installer
-1. Bookmap > Settings > Configure add-ons > **Add** > `tradepro.jar`
+1. Bookmap > Settings > Configure add-ons > **Add** > le jar de l'add-on (`tradepro.jar` est la version actuellement reconnue par les serveurs Bookmap ; les suivantes s'appellent `<username>_TradePro_<version>.jar`)
 2. Choisir **Trade Pro**, cocher la case pour l'activer sur le chart
-3. Le panneau de réglages de l'add-on (en anglais) a trois sections, enregistrées avec le workspace : **Colors** (Long, Short, Take profit, Stop loss), **Lines** (style Solid ou Dashed et largeur de 1 à 6 px, pour la position, le TP et le SL) et **Labels** (position horizontale des étiquettes dans la zone à droite de la timeline : 0 = contre la timeline, 100 = bord droit, 50 par défaut)
+3. Le panneau de réglages de l'add-on (en anglais) a trois sections, enregistrées avec le workspace : **Colors** (Long, Short, Take profit, Stop loss, Label, Label hover), **Lines** (style Solid ou Dashed et largeur de 1 à 6 px, pour la position, le TP et le SL) et **Labels** (position horizontale des étiquettes dans la zone à droite de la timeline : 0 = contre la timeline, 100 = bord droit, 50 par défaut)
 4. Le trading doit être activé dans le TCP de Bookmap
 
 Les add-ons non signés sont bloqués sur le temps réel de Bookmap Data / dxFeed :
@@ -19,6 +19,9 @@ utiliser les données différées, le replay, le crypto ou une connexion courtie
 - **Crosshair** (lignes H + V) avec prix sur le ladder, tant que la souris est sur le chart
 
 Le montant est en dollars quand Bookmap donne la valeur du point de l'instrument, sinon seuls les ticks sont affichés.
+
+### À activer uniquement sans position ouverte
+L'API de Bookmap ne donne pas à un add-on la position déjà ouverte. Trade Pro ne peut suivre que les positions ouvertes après son activation : s'il est activé pendant qu'une position est ouverte, sa ligne de position, ses tailles et ses poignées TP / SL seront fausses. Ferme d'abord ta position, puis active l'add-on. Le panneau de réglages affiche ce rappel.
 
 ### Scale in / scale out
 Quand la position grossit ou diminue sans changer de sens, les TP / SL posés par les poignées prennent sa nouvelle taille (3 → 5 contrats : le TP et le SL passent à 5). Les ordres posés depuis le TCP et les brackets Bookmap ne sont pas touchés.
@@ -34,7 +37,7 @@ Quand la position grossit ou diminue sans changer de sens, les TP / SL posés pa
 - Si la position se ferme ou se retourne pendant que tu tires une poignée, rien n'est envoyé
 
 ## Recompiler
-JDK 17 ou plus requis ; le jar est compilé en Java 17, comme les exemples officiels. Deux façons, qui donnent le même résultat (`tradepro.jar` à la racine, classes dans `build/classes`) :
+JDK 17 ou plus requis ; le jar est compilé en Java 17, comme les exemples officiels. Deux façons, qui donnent le même résultat (`BrunoF_TradePro_1.0.1.jar` à la racine, classes dans `build/classes`) :
 
     .\gradlew.bat jar
 
@@ -53,6 +56,8 @@ Pour ne pas changer le nom du jar à chaque essai :
 1. Dans Bookmap > Configure add-ons > **Add**, choisir `build\classes\bm-strategy-package-fs-root.jar` (fichier vide : Bookmap lit alors les classes directement dans `build\classes`)
 2. Après chaque modification : recompiler, puis recharger l'add-on (ou redémarrer Bookmap)
 
-Si Bookmap a `tradepro.jar` chargé (fichier verrouillé), sortir le jar sous un autre nom :
+Les jars s'appellent `<username>_<addonName>_<addonVersion>.jar`. La version se règle dans `build.gradle` (`version`) et avec `-Version` pour `build.ps1` :
 
-    powershell -ExecutionPolicy Bypass -File build.ps1 -Name tradepro-v2.jar
+    powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.0.2
+
+Aucun des deux builds n'écrit `tradepro.jar` : ce fichier est la version reconnue par les serveurs Bookmap et doit rester tel quel.
