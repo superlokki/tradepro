@@ -818,15 +818,15 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private void moveOrder(OrderInfo o, int level) {
         if (!running) return;
         double p = grid.price(level);
-        if (o.type == OrderType.STP_LMT) {
-            double shift = p - o.stopPrice;         // la limite suit le déclenchement, avec le même écart
-            api.updateOrder(new OrderMoveParameters(o.orderId, p, o.limitPrice + shift));
-        } else if (o.type == OrderType.STP) {
-            api.updateOrder(new OrderMoveParameters(o.orderId, p, Double.NaN));
-        } else if (o.type == OrderType.LMT) {
-            api.updateOrder(new OrderMoveParameters(o.orderId, Double.NaN, p));
-        } else {
-            return;
+        if (o.type == null) return;
+        switch (o.type) {
+            case STP_LMT -> {
+                double shift = p - o.stopPrice;         // la limite suit le déclenchement, avec le même écart
+                api.updateOrder(new OrderMoveParameters(o.orderId, p, o.limitPrice + shift));
+            }
+            case STP -> api.updateOrder(new OrderMoveParameters(o.orderId, p, Double.NaN));
+            case LMT -> api.updateOrder(new OrderMoveParameters(o.orderId, Double.NaN, p));
+            default -> { return; }
         }
         Log.info("Trade Pro: " + o.orderId + " moved " + fmt(orderLevel(o)) + " -> " + fmt(level));
     }
