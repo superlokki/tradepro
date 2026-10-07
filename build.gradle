@@ -35,6 +35,9 @@ dependencies {
 // Mêmes emplacements que build.ps1 : classes dans build/classes, jar à la racine du projet.
 def classesDir = layout.buildDirectory.dir('classes')
 sourceSets.main.java.destinationDirectory = classesDir
+// Même sans tests, Gradle garde un dossier de sortie « test », par défaut build/classes/java/test : imbriqué dans
+// build/classes, il fait échouer l'import du projet dans VS Code ("Cannot nest output folder"). On le sort de là.
+sourceSets.test.java.destinationDirectory = layout.buildDirectory.dir('test-classes')
 
 // Rechargement rapide : charger ce fichier vide dans Bookmap lui fait lire les classes directement dans build/classes.
 def marker = 'bm-strategy-package-fs-root.jar'
