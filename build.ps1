@@ -8,7 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 # Nom des jars publiés : <username>_<addonName>_<addonVersion>.jar.
-# tradepro.jar est la version déjà reconnue par les serveurs Bookmap : ce script ne l'écrit jamais.
+# Les serveurs Bookmap reconnaissent le fichier exact envoyé : ne pas recompiler une version déjà envoyée,
+# augmenter le numéro de version (-Version).
 $Name = "${User}_TradePro_${Version}.jar"
 $cp = "$BookmapLib\bm-l1api.jar;$BookmapLib\bm-simplified-api-wrapper.jar"
 $out = Join-Path $root 'build\classes'
