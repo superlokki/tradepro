@@ -4,7 +4,8 @@ group = 'com.tradepro'
 version = '1.0.1'
 
 // Nom des jars publiés : <username>_<addonName>_<addonVersion>.jar (username = compte Bookmap).
-// tradepro.jar, à la racine, est la version déjà reconnue par les serveurs Bookmap : le build ne l'écrit jamais.
+// Les serveurs Bookmap reconnaissent le fichier exact envoyé : ne pas recompiler une version déjà envoyée,
+// augmenter le numéro de version.
 def addonUser = findProperty('addonUser') ?: 'BrunoF'
 def addonName = 'TradePro'
 

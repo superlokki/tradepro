@@ -2,7 +2,7 @@
 .gradle/
 build/
 
-# Jars compilés (tradepro.jar, tradepro-v2.jar...) : distribués via les releases GitHub
+# Jars compilés (<username>_TradePro_<version>.jar) : distribués via les releases GitHub
 /*.jar
 
 # IDE
