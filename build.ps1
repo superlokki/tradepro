@@ -1,7 +1,7 @@
 ﻿# Compile Trade Pro contre l'API de l'installation Bookmap locale (pas besoin de Gradle).
 # Usage : powershell -ExecutionPolicy Bypass -File build.ps1 [-Version 1.0.2] [-User BrunoF] [-BookmapLib 'D:\Bookmap\lib']
 param(
-    [string]$Version = '1.0.1',                                 # version de l'add-on
+    [string]$Version = '1.0.2',                                 # version de l'add-on
     [string]$User = 'BrunoF',                                   # nom d'utilisateur Bookmap
     [string]$BookmapLib = 'C:\Program Files\Bookmap\lib'        # dossier lib de l'installation Bookmap
 )

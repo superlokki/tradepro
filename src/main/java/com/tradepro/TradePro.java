@@ -77,6 +77,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         public int labelHoverColor = LABEL_BG_HOT.getRGB(); // fond sous le pointeur ou pendant un drag
         public boolean posDashed = false, tpDashed = false, slDashed = false;   // style des lignes
         public int posWidth = 1, tpWidth = 1, slWidth = 1;                      // épaisseur des lignes, en pixels
+        public int posOpacity = 100, tpOpacity = 100, slOpacity = 100;          // opacité du fond des étiquettes, en %
         public int tagPos = 50;     // position horizontale des étiquettes, en % de la zone à droite de la timeline (0 = contre la timeline, 100 = bord droit)
     }
 
@@ -98,9 +99,21 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     /** Position horizontale des étiquettes d'ordres, de position et des poignées, en % de la zone à droite de la timeline. */
     private volatile int tagPos = 50;
+
+    /** Opacité du fond des étiquettes au repos, en % (0 = fond invisible, 100 = plein). Sous le pointeur, le fond est toujours plein. */
+    private volatile int posOpacity = 100, tpOpacity = 100, slOpacity = 100;
+
+    private int opacityOf(Handle h) { return h == Handle.TP ? tpOpacity : slOpacity; }
+
+    private static int clampPercent(int v) { return Math.max(0, Math.min(100, v)); }
+
+    /** Fond d'étiquette au repos, à l'opacité donnée. */
+    private Color idleFill(int percent) {
+        Color c = labelBg;
+        return percent >= 100 ? c : new Color(c.getRed(), c.getGreen(), c.getBlue(), Math.round(255 * percent / 100f));
+    }
     private static final int HANDLE_GAP_PX = 28;    // écart minimal entre la position et ses poignées TP / SL
     private static final int HANDLE_GRAB_PX = 13;   // demi-hauteur de la poignée, plus 1 px
-    private static final int HANDLE_IDLE_ALPHA = 120;   // poignée au repos : translucide ; opaque sous le pointeur
     private static final int NOTICE_MS = 4_000;     // durée d'affichage d'un message de refus sur le chart
     private static final long SENT_HIDE_MS = 3_000; // une poignée reste masquée le temps que son ordre apparaisse dans Bookmap
 
@@ -187,6 +200,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         tpWidth = clampWidth(st.tpWidth);
         slWidth = clampWidth(st.slWidth);
         tagPos = Math.max(0, Math.min(100, st.tagPos));
+        posOpacity = clampPercent(st.posOpacity);
+        tpOpacity = clampPercent(st.tpOpacity);
+        slOpacity = clampPercent(st.slOpacity);
         running = true;
         api.sendUserMessage(Layer1ApiUserMessageModifyScreenSpacePainter
                 .builder(TradePro.class, "Trade Pro")
@@ -602,7 +618,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             }
             // PnL latent au prix de sortie immédiat : le bid pour un long, l'ask pour un short
             String pnl = bboKnown() ? "  " + money(position > 0 ? bestBid : bestAsk, pos, size, position) : "";
-            tag(pos, size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl, false, labelBg);
+            tag(pos, size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl, false, idleFill(posOpacity));
             // Poignée sous le pointeur (celle qu'un clic attraperait) : affichée opaque, comme un bouton survolé
             Handle hover = dragHandle != null ? dragHandle
                     : mouseIn && mouseOnLadder && dragId == null && orderNear(mouseLevel) == null
@@ -629,8 +645,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                     }
                 } else {
                     Color fill = labelHot;
-                    if (hd != hover) {      // au repos : translucide, comme les boutons LMT / STP de Bookmap
-                        fill = new Color(labelBg.getRed(), labelBg.getGreen(), labelBg.getBlue(), HANDLE_IDLE_ALPHA);
+                    if (hd != hover) {      // au repos : opacité réglée pour ce rôle, comme le label de position
+                        fill = idleFill(opacityOf(hd));
                     }
                     tag(handleLevel(hd), hd.toString(), true, fill);
                 }
@@ -655,7 +671,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             String dist = role != null ? "  " + distance(lvl, pos, o.unfilled, position) : "";
             tag(lvl, o.unfilled + " " + name + "  " + fmt(lvl) + dist
                     + (refusal == null ? "" : "  — rejected: " + refusal), false,
-                    refusal != null ? REFUSED : hot ? labelHot : labelBg);
+                    refusal != null ? REFUSED : hot ? labelHot : role != null ? idleFill(opacityOf(role)) : labelBg);
         }
 
         // 2) Message de refus encore affiché
@@ -940,7 +956,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     // ======================================================================
     @Override
     public StrategyPanel[] getCustomSettingsPanels() {
-        StrategyPanel colors = new StrategyPanel("Colors", new GridLayout(6, 1, 6, 6));
+        JPanel colors = new JPanel(new GridLayout(6, 1, 6, 6));
         colors.add(new ColorsConfigItem(posColor, POS, "Long",
                 c -> { posColor = c; settingsChanged(); }));
         colors.add(new ColorsConfigItem(shortColor, POS_SHORT, "Short",
@@ -954,17 +970,22 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         colors.add(new ColorsConfigItem(labelHot, LABEL_BG_HOT, "Label hover",
                 c -> { labelHot = c; settingsChanged(); }));
 
-        StrategyPanel lines = new StrategyPanel("Lines", new GridLayout(4, 3, 6, 6));
-        lines.add(new JLabel("")); lines.add(new JLabel("Style")); lines.add(new JLabel("Width"));
+        JPanel lines = new JPanel(new GridLayout(4, 4, 6, 6));
+        lines.add(new JLabel("")); lines.add(new JLabel("Line style")); lines.add(new JLabel("Line width"));
+        lines.add(new JLabel("Label opacity %"));
         lines.add(new JLabel("Position")); lines.add(styleBox(posDashed, d -> posDashed = d));
         lines.add(widthBox(posWidth, w -> posWidth = w));
+        lines.add(opacityBox(posOpacity, v -> posOpacity = v));
         lines.add(new JLabel("Take profit")); lines.add(styleBox(tpDashed, d -> tpDashed = d));
         lines.add(widthBox(tpWidth, w -> tpWidth = w));
+        lines.add(opacityBox(tpOpacity, v -> tpOpacity = v));
         lines.add(new JLabel("Stop loss")); lines.add(styleBox(slDashed, d -> slDashed = d));
         lines.add(widthBox(slWidth, w -> slWidth = w));
+        lines.add(opacityBox(slOpacity, v -> slOpacity = v));
 
-        StrategyPanel tagsPanel = new StrategyPanel("Labels", new GridLayout(2, 1, 6, 6));
-        String caption = "Position: ";
+        // Libellé et curseur sur une seule ligne : le panneau complet doit tenir dans la fenêtre de réglages de Bookmap
+        JPanel tagsPanel = new JPanel(new GridLayout(1, 2, 6, 6));
+        String caption = "Left to right: ";
         JLabel value = new JLabel(caption + tagPos);
         JSlider slider = new JSlider(0, 100, tagPos);
         slider.setToolTipText(String.valueOf(tagPos));
@@ -977,14 +998,42 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         });
         tagsPanel.add(value);
         tagsPanel.add(slider);
+
         // L'API ne donne pas à un add-on la position déjà ouverte : il ne peut que suivre celles ouvertes après son activation
-        // Une ligne par JLabel, comme les autres sections : un seul label HTML sur deux lignes était rogné en haut
-        StrategyPanel warning = new StrategyPanel("Important", new GridLayout(2, 1, 6, 6));
+        // Deux lignes courtes : sur une seule, le texte dépassait la largeur du panneau et son haut était rogné
+        JPanel warning = new JPanel(new GridLayout(2, 1, 6, 6));
         JLabel rule = new JLabel("Enable Trade Pro only when you are flat.");
         rule.setFont(rule.getFont().deriveFont(Font.BOLD));
         warning.add(rule);
         warning.add(new JLabel("It cannot see a position that was opened before it was enabled."));
-        return new StrategyPanel[] { warning, colors, lines, tagsPanel };
+        return new StrategyPanel[] {
+            section("Important", warning), section("Colors", colors),
+            section("Lines and labels", lines), section("Label position", tagsPanel) };
+    }
+
+    /** Section du panneau de réglages : le contenu, avec une marge intérieure pour ne pas toucher le cadre. */
+    private static StrategyPanel section(String title, JPanel body) {
+        body.setBorder(BorderFactory.createEmptyBorder(4, 4, 6, 4));
+        body.setOpaque(false);
+        StrategyPanel panel = new Section(title);
+        panel.add(body, BorderLayout.CENTER);
+        return panel;
+    }
+
+    /**
+     * Section qui garde toujours la hauteur que demande son contenu, cadre de Bookmap compris : sa taille minimale
+     * est sa taille préférée, donc Bookmap ne peut pas la comprimer (texte rogné, bas du cadre absent), et elle ne
+     * s'étire pas non plus en hauteur. Les tailles sont recalculées à chaque demande, pas figées à la création :
+     * le cadre et son titre sont posés par Bookmap après coup.
+     */
+    private static final class Section extends StrategyPanel {
+        Section(String title) { super(title, new BorderLayout()); }
+
+        @Override public Dimension getMinimumSize() { return getPreferredSize(); }
+
+        @Override public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
     }
 
     /** Liste « Solid / Dashed » pour une ligne. */
@@ -992,6 +1041,13 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         JComboBox<String> box = new JComboBox<>(new String[] { "Solid", "Dashed" });
         box.setSelectedIndex(dashed ? 1 : 0);
         box.addActionListener(e -> { setter.accept(box.getSelectedIndex() == 1); settingsChanged(); });
+        return box;
+    }
+
+    /** Opacité du fond d'une étiquette, de 0 à 100 %, par pas de 5. */
+    private JSpinner opacityBox(int percent, java.util.function.IntConsumer setter) {
+        JSpinner box = new JSpinner(new SpinnerNumberModel(percent, 0, 100, 5));
+        box.addChangeListener(e -> { setter.accept((Integer) box.getValue()); settingsChanged(); });
         return box;
     }
 
@@ -1023,6 +1079,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         st.tpWidth = tpWidth;
         st.slWidth = slWidth;
         st.tagPos = tagPos;
+        st.posOpacity = posOpacity;
+        st.tpOpacity = tpOpacity;
+        st.slOpacity = slOpacity;
         api.setSettings(st);
     }
 }
