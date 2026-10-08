@@ -30,7 +30,7 @@ Trading must be enabled in Bookmap's TCP. Tested on Bookmap 7.9.
 
 ## Settings
 
-The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, and where the labels sit in the right-hand area. Settings are saved with the workspace.
+The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, the opacity of the position, TP and SL labels, and where the labels sit in the right-hand area. Settings are saved with the workspace.
 
 ## Building from source
 

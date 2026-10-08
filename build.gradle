@@ -1,7 +1,7 @@
 plugins { id 'java' }
 
 group = 'com.tradepro'
-version = '1.0.1'
+version = '1.0.2'
 
 // Nom des jars publiés : <username>_<addonName>_<addonVersion>.jar (username = compte Bookmap).
 // Les serveurs Bookmap reconnaissent le fichier exact envoyé : ne pas recompiler une version déjà envoyée,
