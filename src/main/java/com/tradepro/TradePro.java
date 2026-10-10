@@ -55,11 +55,11 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private static final int LABEL_GRAB_PX = 11;    // à droite de la timeline : toute la hauteur de l'étiquette de l'ordre
     private static final int DRAG_MIN_PX = 4;       // en dessous, un clic n'est pas un déplacement : rien n'est envoyé
 
-    private static final Color BUY = new Color(46, 204, 113);
-    private static final Color SELL = new Color(231, 76, 60);
-    private static final Color CROSS = new Color(200, 200, 200, 160);
-    private static final Color POS = new Color(240, 180, 40);
-    private static final Color POS_SHORT = new Color(171, 71, 188);
+    private static final Color BUY = new Color(8, 153, 129);       // #089981
+    private static final Color SELL = new Color(242, 54, 69);       // #F23645
+    private static final Color CROSS = new Color(149, 152, 161);    // #9598A1
+    private static final Color POS = BUY;
+    private static final Color POS_SHORT = SELL;
     private static final Color REFUSED = new Color(150, 40, 40);    // aperçu d'un ordre qui serait refusé, messages de refus
     // Étiquettes au style des labels d'ordres de Bookmap ("1 STP") : fond ardoise, texte blanc. La couleur de
     // l'élément (position, TP, SL) n'apparaît que sur sa ligne.
@@ -123,7 +123,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     /** Take-profit (ordre limite de sortie) ou stop-loss (ordre stop de sortie) : les deux poignées, et le rôle d'un ordre de sortie. */
     enum Handle {
-        TP(new Color(38, 166, 91)), SL(new Color(230, 126, 34));
+        TP(BUY), SL(SELL);
         final Color color;
         Handle(Color c) { color = c; }
         /** Début du clientId des ordres posés par cette poignée : c'est ce qui permet de les reconnaître. */
