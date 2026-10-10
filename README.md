@@ -5,12 +5,12 @@ Trade Pro adds a position line and draggable take-profit / stop-loss handles to 
 ## What it does
 
 - **Shows your position**: a line at the average price with a label such as `5 LONG  31310.85  -$41.00` (size, side, price, unrealized PnL).
-- **TP and SL handles**: two handles appear next to the position. Drag one and release it to place a limit order (TP) or a stop order (SL) for the part of the position that has no exit order yet. While you drag, the label shows the price, the distance in ticks and the amount.
+- **TP and SL handles**: two handles sit on the position line, to the left of its label. Drag one and release it to place a limit order (TP) or a stop order (SL) for the part of the position that has no exit order yet. While you drag, the label shows the price and the profit or loss at that price.
 - **Move orders with the mouse**: grab any working order line and release it at the new price. Right-click during the drag to cancel.
 - **Scale in / scale out**: when the position grows or shrinks, the TP and SL placed with the handles take its new size.
 - **Looks like Bookmap**: labels use Bookmap's own order-label style, and turn blue under the pointer.
 
-Amounts are in dollars when Bookmap knows the instrument's point value; otherwise only ticks are shown.
+Profit and loss is shown in money or in ticks, your choice in the settings. Money needs the instrument's point value: when Bookmap does not know it, ticks are shown.
 
 ## Install
 
@@ -30,7 +30,7 @@ Trading must be enabled in Bookmap's TCP. Tested on Bookmap 7.9.
 
 ## Settings
 
-The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, the opacity of the position, TP and SL labels, and where the labels sit in the right-hand area. Settings are saved with the workspace.
+The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, the opacity of the position, TP and SL labels, whether profit and loss is shown in money or in ticks (separately for the position and for TP / SL), and where the labels sit in the right-hand area. Settings are saved with the workspace.
 
 ## Building from source
 
