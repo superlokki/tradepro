@@ -970,7 +970,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         colors.add(new ColorsConfigItem(labelHot, LABEL_BG_HOT, "Label hover",
                 c -> { labelHot = c; settingsChanged(); }));
 
-        JPanel lines = new JPanel(new GridLayout(4, 4, 6, 6));
+        JPanel lines = new JPanel(new GridLayout(4, 4, 2, 6));
         lines.add(new JLabel("")); lines.add(new JLabel("Line style")); lines.add(new JLabel("Line width"));
         lines.add(new JLabel("Label opacity %"));
         lines.add(new JLabel("Position")); lines.add(styleBox(posDashed, d -> posDashed = d));
@@ -1007,13 +1007,16 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         warning.add(rule);
         warning.add(new JLabel("It cannot see a position that was opened before it was enabled."));
         return new StrategyPanel[] {
-            section("Important", warning), section("Colors", colors),
-            section("Lines and labels", lines), section("Label position", tagsPanel) };
+            section("Important", warning, 8, TEXT_INDENT), section("Colors", colors, 4, 0),
+            section("Lines and labels", lines, 4, TEXT_INDENT), section("Label position", tagsPanel, 4, TEXT_INDENT) };
     }
 
+    /** Retrait que le sélecteur de couleur de Bookmap donne à son libellé : les autres sections s'alignent dessus. */
+    private static final int TEXT_INDENT = 10;
+
     /** Section du panneau de réglages : le contenu, avec une marge intérieure pour ne pas toucher le cadre. */
-    private static StrategyPanel section(String title, JPanel body) {
-        body.setBorder(BorderFactory.createEmptyBorder(4, 4, 6, 4));
+    private static StrategyPanel section(String title, JPanel body, int top, int left) {
+        body.setBorder(BorderFactory.createEmptyBorder(top, left, 6, 4));
         body.setOpaque(false);
         StrategyPanel panel = new Section(title);
         panel.add(body, BorderLayout.CENTER);
