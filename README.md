@@ -18,7 +18,7 @@ Profit and loss is shown in money or in ticks, your choice in the settings. Mone
 2. In Bookmap: Settings > Configure add-ons > **Add**, and pick the jar.
 3. Select **Trade Pro** and tick the checkbox to enable it on the chart.
 
-Trading must be enabled in Bookmap's TCP. Tested on Bookmap 7.9.
+Trading must be enabled in Bookmap's TCP. Tested on Bookmap 8.0.
 
 ## Good to know
 
