@@ -78,6 +78,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         public boolean posDashed = false, tpDashed = false, slDashed = false;   // style des lignes
         public int posWidth = 1, tpWidth = 1, slWidth = 1;                      // épaisseur des lignes, en pixels
         public int posOpacity = 100, tpOpacity = 100, slOpacity = 100;          // opacité du fond des étiquettes, en %
+        public boolean posTicks = false, exitTicks = false;                     // gain / perte en ticks plutôt qu'en argent
         public int tagPos = 50;     // position horizontale des étiquettes, en % de la zone à droite de la timeline (0 = contre la timeline, 100 = bord droit)
     }
 
@@ -103,6 +104,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     /** Opacité du fond des étiquettes au repos, en % (0 = fond invisible, 100 = plein). Sous le pointeur, le fond est toujours plein. */
     private volatile int posOpacity = 100, tpOpacity = 100, slOpacity = 100;
 
+    /** Gain / perte affiché en ticks plutôt qu'en argent : sur la position, et sur les TP / SL. */
+    private volatile boolean posTicks, exitTicks;
+
     private int opacityOf(Handle h) { return h == Handle.TP ? tpOpacity : slOpacity; }
 
     private static int clampPercent(int v) { return Math.max(0, Math.min(100, v)); }
@@ -112,7 +116,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         Color c = labelBg;
         return percent >= 100 ? c : new Color(c.getRed(), c.getGreen(), c.getBlue(), Math.round(255 * percent / 100f));
     }
-    private static final int HANDLE_GAP_PX = 28;    // écart minimal entre la position et ses poignées TP / SL
+    private static final int HANDLE_SPACE_PX = 4;   // espace entre les poignées TP / SL et l'étiquette de la position
     private static final int HANDLE_GRAB_PX = 13;   // demi-hauteur de la poignée, plus 1 px
     private static final int NOTICE_MS = 4_000;     // durée d'affichage d'un message de refus sur le chart
     private static final long SENT_HIDE_MS = 3_000; // une poignée reste masquée le temps que son ordre apparaisse dans Bookmap
@@ -203,6 +207,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         posOpacity = clampPercent(st.posOpacity);
         tpOpacity = clampPercent(st.tpOpacity);
         slOpacity = clampPercent(st.slOpacity);
+        posTicks = st.posTicks;
+        exitTicks = st.exitTicks;
         running = true;
         api.sendUserMessage(Layer1ApiUserMessageModifyScreenSpacePainter
                 .builder(TradePro.class, "Trade Pro")
@@ -384,6 +390,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private volatile int mouseX;
     private volatile double mouseLevel;
     private volatile boolean mouseOnLadder;
+    /** Bords gauche et droit de chaque poignée au dernier dessin : {x1, x2} par Handle.ordinal(), vides si absente. */
+    private volatile int[] handleX = new int[2 * Handle.values().length];
 
     private volatile Handle dragHandle;
     private volatile String dragId;
@@ -564,27 +572,26 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return best;
     }
 
-    /**
-     * Niveau où s'affiche une poignée : au-dessus / en dessous de la position, côté gain pour le TP. Le niveau est
-     * entier, donc la poignée est centrée dans une ligne de prix de la heatmap et non à cheval sur deux.
-     */
-    private double handleLevel(Handle h) {
-        double gap = Math.max(1, HANDLE_GAP_PX / pxPerLevel());
-        boolean up = (h == Handle.TP) == (position() > 0);
-        return up ? Math.ceil(positionLevel() + gap) : Math.floor(positionLevel() - gap);
-    }
-
     /** X du centre d'une étiquette de largeur w, gardée entière dans la zone à droite de la timeline. */
     private int tagCenter(int w) {
         int c = ladderW * tagPos / 100;
         return Math.max(w / 2, Math.min(ladderW - w / 2, c));
     }
 
+    /**
+     * Poignée sous le pointeur. Les poignées sont sur la ligne de la position, à gauche de son étiquette : il faut
+     * être à la hauteur de la position et entre les bords de la poignée (élargis de la moitié de l'espace qui les
+     * sépare, pour qu'un clic entre deux poignées ne devienne pas un ordre Bookmap).
+     */
     private Handle handleNear(double level) {
-        if (Double.isNaN(positionLevel())) return null;
+        double pos = positionLevel();
+        if (Double.isNaN(pos) || Math.abs(pos - level) * pxPerLevel() > HANDLE_GRAB_PX) return null;
+        int[] xs = handleX;
+        int x = mouseX, slack = HANDLE_SPACE_PX / 2;
         for (Handle h : Handle.values()) {
             if (remaining(h, position()) == 0) continue;     // déjà couvert par un ordre en place
-            if (Math.abs(handleLevel(h) - level) * pxPerLevel() <= HANDLE_GRAB_PX) return h;
+            int i = 2 * h.ordinal();
+            if (xs[i + 1] > xs[i] && x >= xs[i] - slack && x < xs[i + 1] + slack) return h;
         }
         return null;
     }
@@ -607,6 +614,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         int position = position();
         double pos = positionLevel();
         boolean moving = dragMoved;
+        if (Double.isNaN(pos)) handleX = new int[2 * Handle.values().length];
         if (!Double.isNaN(pos)) {
             int size = Math.abs(position);
             Color pc = position > 0 ? posColor : shortColor;
@@ -617,8 +625,27 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                         px(ladderW), dataY(pos, pw / 2)));
             }
             // PnL latent au prix de sortie immédiat : le bid pour un long, l'ask pour un short
-            String pnl = bboKnown() ? "  " + money(position > 0 ? bestBid : bestAsk, pos, size, position) : "";
-            tag(pos, size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl, false, idleFill(posOpacity));
+            String pnl = bboKnown() ? "  " + pnl(position > 0 ? bestBid : bestAsk, pos, size, position, posTicks) : "";
+            Img posImg = labelImg(size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl,
+                    idleFill(posOpacity), false);
+            // Les poignées TP / SL sont sur la même ligne, à gauche de l'étiquette de la position, qui garde sa place
+            // (sauf s'il n'y a pas la place à gauche : elle se pousse alors vers la droite)
+            int[] xs = new int[2 * Handle.values().length];
+            int handlesW = 0;
+            for (Handle hd : Handle.values()) {
+                if (remaining(hd, position) > 0) handlesW += labelImg(hd.toString(), labelBg, true).w() + HANDLE_SPACE_PX;
+            }
+            int posX = Math.max(handlesW, tagCenter(posImg.w()) - posImg.w() / 2);
+            int nextX = posX - handlesW;
+            for (Handle hd : Handle.values()) {
+                if (remaining(hd, position) == 0) continue;
+                int w = labelImg(hd.toString(), labelBg, true).w();
+                xs[2 * hd.ordinal()] = nextX;
+                xs[2 * hd.ordinal() + 1] = nextX + w;
+                nextX += w + HANDLE_SPACE_PX;
+            }
+            handleX = xs;
+            place(pos, posImg, posX);
             // Poignée sous le pointeur (celle qu'un clic attraperait) : affichée opaque, comme un bouton survolé
             Handle hover = dragHandle != null ? dragHandle
                     : mouseIn && mouseOnLadder && dragId == null && orderNear(mouseLevel) == null
@@ -648,7 +675,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                     if (hd != hover) {      // au repos : opacité réglée pour ce rôle, comme le label de position
                         fill = idleFill(opacityOf(hd));
                     }
-                    tag(handleLevel(hd), hd.toString(), true, fill);
+                    place(pos, labelImg(hd.toString(), fill, true), xs[2 * hd.ordinal()]);
                 }
             }
         }
@@ -708,7 +735,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
      * Si elle recouvrirait une étiquette déjà placée à un prix voisin, elle est décalée à sa droite.
      */
     /**
-     * @param big    étiquette plus large et plus haute : les poignées, pour être faciles à viser
+     * @param big    étiquette plus large : les poignées, pour être faciles à viser
      * @param fill   fond de l'étiquette (labelBg au repos, labelHot sous le pointeur)
      */
     private void tag(double level, String text, boolean big, Color fill) {
@@ -725,6 +752,11 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                 }
             }
         }
+        place(level, img, x);
+    }
+
+    /** Pose une étiquette à cet endroit précis, et la note pour que les suivantes ne la recouvrent pas. */
+    private void place(double level, Img img, int x) {
         placed.add(new double[] { level, x, x + img.w(), img.h() });
         tags.add(icon(img.image(), px(x), dataY(level, -img.h() / 2),
                 px(x + img.w()), dataY(level, img.h() - img.h() / 2)));
@@ -852,20 +884,19 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return grid.level(stop ? o.stopPrice : o.limitPrice);
     }
 
-    /** Écart d'un niveau au prix moyen de la position, en ticks puis en argent : "(12 t)  +$150.00". */
+    /** Gain ou perte d'un TP / SL à ce niveau, dans l'unité réglée pour les TP / SL. */
     private String distance(double level, double posLevel, int size, int position) {
-        long ticks = Math.round(Math.abs(level - posLevel));
-        String text = "(" + ticks + " t)";
-        return Double.isNaN(multiplier) ? text : text + "  " + money(level, posLevel, size, position);
+        return pnl(level, posLevel, size, position, exitTicks);
     }
 
     /**
-     * Gain ou perte si la position sort à ce niveau, pour la taille donnée : "+$250.00" / "-$125.00".
-     * En ticks ("+12 t") quand la valeur du point de l'instrument est inconnue, plutôt qu'un montant faux.
+     * Gain ou perte si la position sort à ce niveau : en argent pour la taille donnée ("+$250.00" / "-$125.00"),
+     * ou en ticks par contrat ("+12 t"). Toujours en ticks quand la valeur du point de l'instrument est inconnue,
+     * plutôt qu'un montant faux.
      */
-    private String money(double level, double posLevel, int size, int position) {
+    private String pnl(double level, double posLevel, int size, int position, boolean inTicks) {
         double ticks = (level - posLevel) * (position > 0 ? 1 : -1);
-        if (Double.isNaN(multiplier)) return String.format("%+.0f t", ticks);
+        if (inTicks || Double.isNaN(multiplier)) return String.format("%+.0f t", ticks);
         double pnl = ticks * pips * multiplier * size;
         return (pnl < 0 ? "-$" : "+$") + String.format("%,.2f", Math.abs(pnl));
     }
@@ -933,7 +964,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         Graphics2D pg = probe.createGraphics();
         FontMetrics fm = pg.getFontMetrics(FONT);
         pg.dispose();
-        int padX = big ? 18 : 7, padY = big ? 4 : 2;
+        // Les poignées ont la hauteur des autres étiquettes : elles sont sur la même ligne que celle de la position
+        int padX = big ? 12 : 7, padY = 2;
         int w = fm.stringWidth(text) + 2 * padX, h = fm.getHeight() + 2 * padY;
 
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -1001,6 +1033,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
         // L'API ne donne pas à un add-on la position déjà ouverte : il ne peut que suivre celles ouvertes après son activation
         // Deux lignes courtes : sur une seule, le texte dépassait la largeur du panneau et son haut était rogné
+        JPanel pnlPanel = new JPanel(new GridLayout(2, 2, 6, 6));
+        pnlPanel.add(new JLabel("Position"));
+        pnlPanel.add(unitBox(posTicks, t -> posTicks = t));
+        pnlPanel.add(new JLabel("Take profit / Stop loss"));
+        pnlPanel.add(unitBox(exitTicks, t -> exitTicks = t));
+
         JPanel warning = new JPanel(new GridLayout(2, 1, 6, 6));
         JLabel rule = new JLabel("Enable Trade Pro only when you are flat.");
         rule.setFont(rule.getFont().deriveFont(Font.BOLD));
@@ -1008,7 +1046,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         warning.add(new JLabel("It cannot see a position that was opened before it was enabled."));
         return new StrategyPanel[] {
             section("Important", warning, 8, TEXT_INDENT), section("Colors", colors, 4, 0),
-            section("Lines and labels", lines, 4, TEXT_INDENT), section("Label position", tagsPanel, 4, TEXT_INDENT) };
+            section("Lines and labels", lines, 4, TEXT_INDENT),
+            section("Profit and loss value", pnlPanel, 4, TEXT_INDENT),
+            section("Label position", tagsPanel, 4, TEXT_INDENT) };
     }
 
     /** Retrait que le sélecteur de couleur de Bookmap donne à son libellé : les autres sections s'alignent dessus. */
@@ -1043,6 +1083,14 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private JComboBox<String> styleBox(boolean dashed, java.util.function.Consumer<Boolean> setter) {
         JComboBox<String> box = new JComboBox<>(new String[] { "Solid", "Dashed" });
         box.setSelectedIndex(dashed ? 1 : 0);
+        box.addActionListener(e -> { setter.accept(box.getSelectedIndex() == 1); settingsChanged(); });
+        return box;
+    }
+
+    /** Liste « Money / Ticks » pour l'unité d'un gain / perte. */
+    private JComboBox<String> unitBox(boolean ticks, java.util.function.Consumer<Boolean> setter) {
+        JComboBox<String> box = new JComboBox<>(new String[] { "Money", "Ticks" });
+        box.setSelectedIndex(ticks ? 1 : 0);
         box.addActionListener(e -> { setter.accept(box.getSelectedIndex() == 1); settingsChanged(); });
         return box;
     }
@@ -1085,6 +1133,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         st.posOpacity = posOpacity;
         st.tpOpacity = tpOpacity;
         st.slOpacity = slOpacity;
+        st.posTicks = posTicks;
+        st.exitTicks = exitTicks;
         api.setSettings(st);
     }
 }
