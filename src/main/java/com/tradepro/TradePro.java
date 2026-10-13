@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.swing.*;
+import javax.swing.plaf.basic.BasicHTML;
 
 import velox.api.layer1.annotations.*;
 import velox.api.layer1.common.Log;
@@ -988,35 +989,29 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     // ======================================================================
     @Override
     public StrategyPanel[] getCustomSettingsPanels() {
-        JPanel colors = new JPanel(new GridLayout(6, 1, 6, 6));
-        colors.add(new ColorsConfigItem(posColor, POS, "Long",
-                c -> { posColor = c; settingsChanged(); }));
-        colors.add(new ColorsConfigItem(shortColor, POS_SHORT, "Short",
-                c -> { shortColor = c; settingsChanged(); }));
-        colors.add(new ColorsConfigItem(tpColor, Handle.TP.color, "Take profit",
-                c -> { tpColor = c; settingsChanged(); }));
-        colors.add(new ColorsConfigItem(slColor, Handle.SL.color, "Stop loss",
-                c -> { slColor = c; settingsChanged(); }));
-        colors.add(new ColorsConfigItem(labelBg, LABEL_BG, "Label",
-                c -> { labelBg = c; settingsChanged(); }));
-        colors.add(new ColorsConfigItem(labelHot, LABEL_BG_HOT, "Label hover",
-                c -> { labelHot = c; settingsChanged(); }));
+        JPanel colors = verticalBox();
+        colors.add(colorRow(posColor, POS, "Long", c -> { posColor = c; settingsChanged(); }));
+        colors.add(gap());
+        colors.add(colorRow(shortColor, POS_SHORT, "Short", c -> { shortColor = c; settingsChanged(); }));
+        colors.add(gap());
+        colors.add(colorRow(tpColor, Handle.TP.color, "Take profit", c -> { tpColor = c; settingsChanged(); }));
+        colors.add(gap());
+        colors.add(colorRow(slColor, Handle.SL.color, "Stop loss", c -> { slColor = c; settingsChanged(); }));
+        colors.add(gap());
+        colors.add(colorRow(labelBg, LABEL_BG, "Label", c -> { labelBg = c; settingsChanged(); }));
+        colors.add(gap());
+        colors.add(colorRow(labelHot, LABEL_BG_HOT, "Label hover", c -> { labelHot = c; settingsChanged(); }));
 
-        JPanel lines = new JPanel(new GridLayout(4, 4, 2, 6));
-        lines.add(new JLabel("")); lines.add(new JLabel("Line style")); lines.add(new JLabel("Line width"));
-        lines.add(new JLabel("Label opacity %"));
-        lines.add(new JLabel("Position")); lines.add(styleBox(posDashed, d -> posDashed = d));
-        lines.add(widthBox(posWidth, w -> posWidth = w));
-        lines.add(opacityBox(posOpacity, v -> posOpacity = v));
-        lines.add(new JLabel("Take profit")); lines.add(styleBox(tpDashed, d -> tpDashed = d));
-        lines.add(widthBox(tpWidth, w -> tpWidth = w));
-        lines.add(opacityBox(tpOpacity, v -> tpOpacity = v));
-        lines.add(new JLabel("Stop loss")); lines.add(styleBox(slDashed, d -> slDashed = d));
-        lines.add(widthBox(slWidth, w -> slWidth = w));
-        lines.add(opacityBox(slOpacity, v -> slOpacity = v));
+        JPanel lines = new JPanel(new GridBagLayout());
+        lines.setOpaque(false);
+        lineHeader(lines);
+        lineRow(lines, 1, "Position", styleBox(posDashed, d -> posDashed = d),
+                widthBox(posWidth, w -> posWidth = w), opacityBox(posOpacity, v -> posOpacity = v));
+        lineRow(lines, 2, "Take profit", styleBox(tpDashed, d -> tpDashed = d),
+                widthBox(tpWidth, w -> tpWidth = w), opacityBox(tpOpacity, v -> tpOpacity = v));
+        lineRow(lines, 3, "Stop loss", styleBox(slDashed, d -> slDashed = d),
+                widthBox(slWidth, w -> slWidth = w), opacityBox(slOpacity, v -> slOpacity = v));
 
-        // Libellé et curseur sur une seule ligne : le panneau complet doit tenir dans la fenêtre de réglages de Bookmap
-        JPanel tagsPanel = new JPanel(new GridLayout(1, 2, 6, 6));
         String caption = "Left to right: ";
         JLabel value = new JLabel(caption + tagPos);
         JSlider slider = new JSlider(0, 100, tagPos);
@@ -1028,22 +1023,19 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             if (slider.getValueIsAdjusting()) redrawAll();      // l'aperçu suit le curseur, l'enregistrement attend le relâchement
             else settingsChanged();
         });
-        tagsPanel.add(value);
-        tagsPanel.add(slider);
+        JPanel tagsPanel = pair(value, slider);
 
         // L'API ne donne pas à un add-on la position déjà ouverte : il ne peut que suivre celles ouvertes après son activation
-        // Deux lignes courtes : sur une seule, le texte dépassait la largeur du panneau et son haut était rogné
-        JPanel pnlPanel = new JPanel(new GridLayout(2, 2, 6, 6));
-        pnlPanel.add(new JLabel("Position"));
-        pnlPanel.add(unitBox(posTicks, t -> posTicks = t));
-        pnlPanel.add(new JLabel("Take profit / Stop loss"));
-        pnlPanel.add(unitBox(exitTicks, t -> exitTicks = t));
+        JPanel pnlPanel = verticalBox();
+        pnlPanel.add(pair(new JLabel("Position"), unitBox(posTicks, t -> posTicks = t)));
+        pnlPanel.add(gap());
+        pnlPanel.add(pair(new JLabel("Take profit / Stop loss"), unitBox(exitTicks, t -> exitTicks = t)));
 
-        JPanel warning = new JPanel(new GridLayout(2, 1, 6, 6));
-        JLabel rule = new JLabel("Enable Trade Pro only when you are flat.");
-        rule.setFont(rule.getFont().deriveFont(Font.BOLD));
-        warning.add(rule);
-        warning.add(new JLabel("It cannot see a position that was opened before it was enabled."));
+        JPanel warning = verticalBox();
+        warning.add(new FittingLabel("Enable Trade Pro only when you are flat.", true));
+        warning.add(gap());
+        warning.add(new FittingLabel(
+                "It cannot see a position that was opened before it was enabled.", false));
         return new StrategyPanel[] {
             section("Important", warning, 8, TEXT_INDENT), section("Colors", colors, 4, 0),
             section("Lines and labels", lines, 4, TEXT_INDENT),
@@ -1053,6 +1045,69 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     /** Retrait que le sélecteur de couleur de Bookmap donne à son libellé : les autres sections s'alignent dessus. */
     private static final int TEXT_INDENT = 10;
+
+    private static JPanel verticalBox() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setOpaque(false);
+        return panel;
+    }
+
+    /** Espace vertical aligné à gauche : un strut centré empêche BoxLayout d'étirer la ligne sur toute la largeur. */
+    private static Component gap() {
+        JComponent gap = (JComponent) Box.createVerticalStrut(6);
+        gap.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return gap;
+    }
+
+    /** Libellé à gauche, contrôle à droite. Le contrôle garde sa largeur ; le libellé prend le reste. */
+    private static JPanel pair(JComponent label, JComponent control) {
+        JPanel row = new JPanel(new GridBagLayout());
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = 0;
+        g.gridy = 0;
+        g.weightx = 1;
+        g.anchor = GridBagConstraints.LINE_START;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        g.insets = new Insets(0, 0, 0, 8);
+        row.add(label, g);
+        g = new GridBagConstraints();
+        g.gridx = 1;
+        g.gridy = 0;
+        g.anchor = GridBagConstraints.LINE_END;
+        row.add(control, g);
+        return row;
+    }
+
+    private static void lineHeader(JPanel lines) {
+        String[] heads = { "", "Line style", "Line width", "Label opacity %" };
+        for (int col = 0; col < heads.length; col++) lines.add(new JLabel(heads[col]), lineCell(0, col));
+    }
+
+    private static void lineRow(JPanel lines, int row, String name, JComponent style, JComponent width, JComponent opacity) {
+        lines.add(new JLabel(name), lineCell(row, 0));
+        lines.add(style, lineCell(row, 1));
+        lines.add(width, lineCell(row, 2));
+        lines.add(opacity, lineCell(row, 3));
+    }
+
+    /**
+     * Colonne du nom extensible, les trois contrôles à leur largeur naturelle.
+     * Une grille égale (GridLayout) prenait quatre fois la colonne la plus large — l'en-tête
+     * « Label opacity % » — et Bookmap, qui impose la largeur du dialogue, rognait le texte.
+     */
+    private static GridBagConstraints lineCell(int row, int col) {
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = col;
+        g.gridy = row;
+        g.weightx = col == 0 ? 1 : 0;
+        g.anchor = GridBagConstraints.LINE_START;
+        g.fill = col == 0 ? GridBagConstraints.HORIZONTAL : GridBagConstraints.NONE;
+        g.insets = new Insets(row == 0 ? 0 : 6, col == 0 ? 0 : 8, 0, 0);
+        return g;
+    }
 
     /** Section du panneau de réglages : le contenu, avec une marge intérieure pour ne pas toucher le cadre. */
     private static StrategyPanel section(String title, JPanel body, int top, int left) {
@@ -1064,18 +1119,97 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     /**
-     * Section qui garde toujours la hauteur que demande son contenu, cadre de Bookmap compris : sa taille minimale
-     * est sa taille préférée, donc Bookmap ne peut pas la comprimer (texte rogné, bas du cadre absent), et elle ne
-     * s'étire pas non plus en hauteur. Les tailles sont recalculées à chaque demande, pas figées à la création :
-     * le cadre et son titre sont posés par Bookmap après coup.
+     * Le dialogue des études s'ouvre à une largeur fixe (820 px, 900 en français) et la ramène
+     * à 1300 si on la dépasse. Il n'a pas de défilement horizontal : le contenu est écrasé à
+     * cette largeur. La hauteur du cadre titré n'est connue qu'une fois le panneau affiché,
+     * donc un second passage de mise en page est fait à ce moment-là. La taille minimale reste
+     * nulle pour que le défilement vertical puisse apparaître : Bookmap recopie la minimale du
+     * panneau sur son ascenseur, et une minimale égale à la taille préférée rognait le bas.
      */
     private static final class Section extends StrategyPanel {
         Section(String title) { super(title, new BorderLayout()); }
 
-        @Override public Dimension getMinimumSize() { return getPreferredSize(); }
+        /**
+         * Largeur demandée plafonnée. Bookmap empile les sections dans un GridBagLayout forcé à la largeur de la
+         * fenêtre : si une seule section demande plus large que la place disponible, GridBagLayout passe toutes
+         * les sections à leur taille minimale (nulle ici) et le panneau s'ouvre vide. Les add-ons de Bookmap
+         * (AVWAP) plafonnent de la même façon, à 372 px. La section est de toute façon étirée à la largeur réelle.
+         */
+        @Override public Dimension getPreferredSize() {
+            Dimension preferred = super.getPreferredSize();
+            return new Dimension(Math.min(preferred.width, MAX_ASKED_WIDTH), preferred.height);
+        }
+
+        private static final int MAX_ASKED_WIDTH = 372;
+
+        @Override public Dimension getMinimumSize() { return new Dimension(0, 0); }
 
         @Override public Dimension getMaximumSize() {
             return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+
+        @Override public void addNotify() {
+            super.addNotify();
+            SwingUtilities.invokeLater(() -> {
+                revalidate();
+                if (getParent() != null) getParent().revalidate();
+            });
+        }
+    }
+
+    /**
+     * Ligne de couleur de Bookmap. Son libellé est verrouillé à 250 px : avec les boutons,
+     * la ligne dépasse la largeur utile du dialogue et les boutons sont rognés. On retire ce
+     * verrou, et la hauteur préférée suit la hauteur minimale (les boutons, sinon coupés).
+     */
+    private static final class ColorRow extends ColorsConfigItem {
+        ColorRow(Color current, Color fallback, String name, java.util.function.Consumer<Color> onPick) {
+            super(current, fallback, name, onPick);
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            JLabel label = getLabel();
+            if (label != null) label.setPreferredSize(null);
+        }
+
+        @Override public Dimension getPreferredSize() {
+            Dimension preferred = super.getPreferredSize();
+            Dimension minimum = super.getMinimumSize();
+            return new Dimension(preferred.width, Math.max(preferred.height, minimum.height));
+        }
+    }
+
+    private ColorRow colorRow(Color current, Color fallback, String name, java.util.function.Consumer<Color> onPick) {
+        return new ColorRow(current, fallback, name, onPick);
+    }
+
+    /**
+     * Texte qui passe à la ligne quand Bookmap rétrécit le panneau, et qui redemande alors
+     * la hauteur correspondante. Un JLabel simple est coupé, il ne revient pas à la ligne.
+     */
+    private static final class FittingLabel extends JLabel {
+        FittingLabel(String text, boolean bold) {
+            super("<html>" + text + "</html>");
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            if (bold) setFont(getFont().deriveFont(Font.BOLD));
+        }
+
+        @Override public Dimension getPreferredSize() {
+            Dimension preferred = super.getPreferredSize();
+            int width = getWidth();
+            if (width <= 0 && getParent() != null) width = getParent().getWidth() - parentInsets();
+            int inner = width - getInsets().left - getInsets().right;
+            if (inner <= 0 || inner >= preferred.width) return preferred;
+            javax.swing.text.View html = (javax.swing.text.View) getClientProperty(BasicHTML.propertyKey);
+            if (html == null) return preferred;
+            html.setSize(inner, Integer.MAX_VALUE);
+            int height = (int) Math.ceil(html.getPreferredSpan(javax.swing.text.View.Y_AXIS))
+                    + getInsets().top + getInsets().bottom;
+            return new Dimension(inner, Math.max(preferred.height, height));
+        }
+
+        private int parentInsets() {
+            if (!(getParent() instanceof JComponent parent)) return 0;
+            Insets insets = parent.getInsets();
+            return insets.left + insets.right;
         }
     }
 
