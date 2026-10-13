@@ -29,7 +29,7 @@ Jars are named `<username>_<addonName>_<addonVersion>.jar`, for example `BrunoF_
 - Gradle: the version is `version` in `build.gradle`; the username is `addonUser` (or `-PaddonUser=...`).
 - `build.ps1`: use `-Version` and `-User`.
 
-      powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.0.2
+      powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.0.3
 
 Bookmap's servers recognize the exact file that was uploaded. Do not rebuild a version that has already been uploaded or released: raise the version number instead.
 
