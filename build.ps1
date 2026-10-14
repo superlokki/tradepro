@@ -34,6 +34,9 @@ $sources = Get-ChildItem (Join-Path $root 'src\main\java') -Recurse -Filter *.ja
 javac --release 17 -encoding UTF-8 -cp $cp -d $out $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation échouée.' }
 
+# Version affichée dans les réglages : l'add-on la lit dans com/tradepro/version.txt.
+Set-Content -LiteralPath (Join-Path $out 'com\tradepro\version.txt') -Value $Version -NoNewline -Encoding ascii
+
 # Rechargement rapide : charger ce fichier vide dans Bookmap lui fait lire les classes directement dans build\classes,
 # donc plus besoin de changer le nom du jar à chaque essai.
 $marker = Join-Path $out 'bm-strategy-package-fs-root.jar'

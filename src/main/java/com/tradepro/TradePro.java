@@ -910,6 +910,18 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return img;
     }
 
+    /** Version de l'add-on, écrite par le build dans version.txt. */
+    private static final String VERSION = readVersion();
+
+    private static String readVersion() {
+        try (InputStream in = TradePro.class.getResourceAsStream("version.txt")) {
+            if (in != null) return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            // version inconnue
+        }
+        return "?";
+    }
+
     private static final Font FONT = uiFont(12f);
 
     /** Police de Bookmap (Roboto), sinon police système. */
@@ -999,11 +1011,15 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         warning.add(gap());
         warning.add(new FittingLabel(
                 "It cannot see a position that was opened before it was enabled.", false));
+
+        JPanel about = verticalBox();
+        about.add(new FittingLabel("Trade Pro " + VERSION, false));
         return new StrategyPanel[] {
             section("Important", warning, 8, TEXT_INDENT), section("Colors", colors, 4, 0),
             section("Lines and labels", lines, 4, TEXT_INDENT),
             section("Profit and loss value", pnlPanel, 4, TEXT_INDENT),
-            section("Label position", tagsPanel, 4, TEXT_INDENT) };
+            section("Label position", tagsPanel, 4, TEXT_INDENT),
+            section("About", about, 4, TEXT_INDENT) };
     }
 
     /** Retrait du libellé des couleurs de Bookmap, repris par les autres sections. */

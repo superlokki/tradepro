@@ -41,7 +41,12 @@ sourceSets.test.java.destinationDirectory = layout.buildDirectory.dir('test-clas
 
 // Rechargement rapide : charger ce fichier vide dans Bookmap lui fait lire les classes directement dans build/classes.
 def marker = 'bm-strategy-package-fs-root.jar'
-compileJava.doLast { classesDir.get().file(marker).asFile.createNewFile() }
+// Version affichée dans les réglages : l'add-on la lit dans com/tradepro/version.txt.
+compileJava.inputs.property('addonVersion', version)
+compileJava.doLast {
+    classesDir.get().file(marker).asFile.createNewFile()
+    classesDir.get().file('com/tradepro/version.txt').asFile.text = project.version.toString()
+}
 
 jar {
     archiveFileName = "${addonUser}_${addonName}_${version}.jar"
