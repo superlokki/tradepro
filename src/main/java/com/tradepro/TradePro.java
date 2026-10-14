@@ -5,6 +5,7 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,45 +30,38 @@ import velox.gui.StrategyPanel;
 import velox.gui.colors.ColorsConfigItem;
 
 /**
- * Couche d'affichage et de drag par-dessus le trading de Bookmap, à droite de la timeline :
- *  - ligne + étiquette sur la position ouverte ("LONG 3 @ prix" et PnL) ; la position vient du statut de Bookmap
- *    quand le fournisseur l'envoie, sinon des exécutions (PositionTracker)
- *  - poignées TP / SL à tirer : elles posent un ordre limite (TP) ou stop (SL) ordinaire, de la taille de la position
- *  - drag & drop de n'importe quel ordre actif pour le déplacer ; clic droit pendant le drag = abandonner
- *  - sur chaque ordre de sortie, l'écart en ticks et le montant par rapport au prix moyen de la position
- *  - crosshair avec étiquette de prix tant que la souris est sur le chart
- *
- * Scale in / scale out : les TP / SL posés par les poignées suivent la taille de la position. L'add-on ne les
- * annule pas quand la position se ferme : c'est laissé à Bookmap (add-on Execution Pro, ou à la main).
- * Les ordres d'entrée et leur taille viennent du trading natif de Bookmap (TCP).
+ * Couche d'affichage et de drag par-dessus le trading de Bookmap :
+ *  - ligne et étiquette de la position, avec son PnL
+ *  - poignées TP / SL à tirer pour poser un ordre de sortie
+ *  - drag & drop des ordres actifs ; clic droit pendant le drag = abandon
+ *  - crosshair avec étiquette de prix
+ * Les TP / SL des poignées suivent la taille de la position ; l'add-on ne les annule jamais.
  */
 @Layer1SimpleAttachable
 @Layer1StrategyName("Trade Pro")
 @Layer1ApiVersion(Layer1ApiVersionValue.VERSION2)
 @Layer1TradingStrategy
-@UnrestrictedData   // demandé par Bookmap ; l'add-on n'écrit ni n'envoie aucune donnée de marché hors de Bookmap
+@UnrestrictedData   // requis par Bookmap ; aucune donnée ne sort de Bookmap
 public class TradePro implements CustomModule, BboListener, OrdersListener, PositionListener,
         CustomSettingsPanelProvider, ScreenSpacePainterFactory {
 
-    // Priorité maximale accordée à un add-on : sur une de nos cibles (poignée, ligne d'ordre), le clic doit nous
-    // revenir même là où Bookmap dessine ses propres éléments cliquables dans la zone à droite de la timeline.
+    // Priorité maximale : sur nos cibles, le clic nous revient avant Bookmap
     private static final int HIGH_SCORE = MouseModuleScore.MAX.score;
     private static final int GRAB_PX = 6;           // tolérance pour attraper une ligne sur la heatmap
-    private static final int LABEL_GRAB_PX = 11;    // à droite de la timeline : toute la hauteur de l'étiquette de l'ordre
-    private static final int DRAG_MIN_PX = 4;       // en dessous, un clic n'est pas un déplacement : rien n'est envoyé
+    private static final int LABEL_GRAB_PX = 11;    // à droite de la timeline : hauteur de l'étiquette
+    private static final int DRAG_MIN_PX = 4;       // en dessous, c'est un clic, pas un déplacement
 
     private static final Color BUY = new Color(8, 153, 129);       // #089981
     private static final Color SELL = new Color(242, 54, 69);       // #F23645
     private static final Color CROSS = new Color(149, 152, 161);    // #9598A1
     private static final Color POS = BUY;
     private static final Color POS_SHORT = SELL;
-    private static final Color REFUSED = new Color(150, 40, 40);    // aperçu d'un ordre qui serait refusé, messages de refus
-    // Étiquettes au style des labels d'ordres de Bookmap ("1 STP") : fond ardoise, texte blanc. La couleur de
-    // l'élément (position, TP, SL) n'apparaît que sur sa ligne.
+    private static final Color REFUSED = new Color(150, 40, 40);    // ordre refusé
+    // Étiquettes au style de Bookmap : fond ardoise, texte blanc
     private static final Color LABEL_BG = new Color(57, 73, 82);
-    private static final Color LABEL_BG_HOT = new Color(12, 113, 160);    // bleu de survol de Bookmap : sous le pointeur ou pendant un drag
+    private static final Color LABEL_BG_HOT = new Color(12, 113, 160);    // survol ou drag
 
-    /** Réglages enregistrés par Bookmap avec le workspace (un jeu par instrument). */
+    /** Réglages enregistrés avec le workspace, par instrument. */
     @StrategySettingsVersion(currentVersion = 1, compatibleVersions = {})
     public static class Settings {
         public int posColor = POS.getRGB();             // position LONG
@@ -75,12 +69,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         public int tpColor = Handle.TP.color.getRGB();
         public int slColor = Handle.SL.color.getRGB();
         public int labelColor = LABEL_BG.getRGB();          // fond des étiquettes
-        public int labelHoverColor = LABEL_BG_HOT.getRGB(); // fond sous le pointeur ou pendant un drag
-        public boolean posDashed = false, tpDashed = false, slDashed = false;   // style des lignes
-        public int posWidth = 1, tpWidth = 1, slWidth = 1;                      // épaisseur des lignes, en pixels
-        public int posOpacity = 100, tpOpacity = 100, slOpacity = 100;          // opacité du fond des étiquettes, en %
-        public boolean posTicks = false, exitTicks = false;                     // gain / perte en ticks plutôt qu'en argent
-        public int tagPos = 50;     // position horizontale des étiquettes, en % de la zone à droite de la timeline (0 = contre la timeline, 100 = bord droit)
+        public int labelHoverColor = LABEL_BG_HOT.getRGB(); // fond au survol ou pendant un drag
+        public boolean posDashed = false, tpDashed = false, slDashed = false;
+        public int posWidth = 1, tpWidth = 1, slWidth = 1;                      // en pixels
+        public int posOpacity = 100, tpOpacity = 100, slOpacity = 100;          // fond des étiquettes, en %
+        public boolean posTicks = false, exitTicks = false;                     // ticks plutôt qu'argent
+        public int tagPos = 50;     // position des étiquettes, en % (0 = contre la timeline, 100 = bord droit)
     }
 
     private volatile Color posColor = POS, shortColor = POS_SHORT, tpColor = Handle.TP.color, slColor = Handle.SL.color;
@@ -93,19 +87,19 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private boolean dashedOf(Handle h) { return h == Handle.TP ? tpDashed : slDashed; }
 
     private static final int WIDTH_MAX = 6;
-    private volatile int posWidth = 1, tpWidth = 1, slWidth = 1;    // épaisseur des lignes, en pixels
+    private volatile int posWidth = 1, tpWidth = 1, slWidth = 1;    // en pixels
 
     private int widthOf(Handle h) { return h == Handle.TP ? tpWidth : slWidth; }
 
     private static int clampWidth(int w) { return Math.max(1, Math.min(WIDTH_MAX, w)); }
 
-    /** Position horizontale des étiquettes d'ordres, de position et des poignées, en % de la zone à droite de la timeline. */
+    /** Position horizontale des étiquettes, en %. */
     private volatile int tagPos = 50;
 
-    /** Opacité du fond des étiquettes au repos, en % (0 = fond invisible, 100 = plein). Sous le pointeur, le fond est toujours plein. */
+    /** Opacité du fond des étiquettes au repos, en %. */
     private volatile int posOpacity = 100, tpOpacity = 100, slOpacity = 100;
 
-    /** Gain / perte affiché en ticks plutôt qu'en argent : sur la position, et sur les TP / SL. */
+    /** Gain / perte en ticks plutôt qu'en argent. */
     private volatile boolean posTicks, exitTicks;
 
     private int opacityOf(Handle h) { return h == Handle.TP ? tpOpacity : slOpacity; }
@@ -117,17 +111,17 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         Color c = labelBg;
         return percent >= 100 ? c : new Color(c.getRed(), c.getGreen(), c.getBlue(), Math.round(255 * percent / 100f));
     }
-    private static final int HANDLE_SPACE_PX = 4;   // espace entre les poignées TP / SL et l'étiquette de la position
+    private static final int HANDLE_SPACE_PX = 4;   // entre les poignées et l'étiquette de la position
     private static final int HANDLE_GRAB_PX = 13;   // demi-hauteur de la poignée, plus 1 px
-    private static final int NOTICE_MS = 4_000;     // durée d'affichage d'un message de refus sur le chart
-    private static final long SENT_HIDE_MS = 3_000; // une poignée reste masquée le temps que son ordre apparaisse dans Bookmap
+    private static final int NOTICE_MS = 4_000;     // durée d'un message de refus
+    private static final long SENT_HIDE_MS = 3_000; // poignée masquée le temps que son ordre apparaisse
 
-    /** Take-profit (ordre limite de sortie) ou stop-loss (ordre stop de sortie) : les deux poignées, et le rôle d'un ordre de sortie. */
+    /** Take profit (limite) ou stop loss (stop) : poignée, et rôle d'un ordre de sortie. */
     enum Handle {
         TP(BUY), SL(SELL);
         final Color color;
         Handle(Color c) { color = c; }
-        /** Début du clientId des ordres posés par cette poignée : c'est ce qui permet de les reconnaître. */
+        /** Début du clientId des ordres de cette poignée. */
         String prefix() { return "tradepro-" + this + "-"; }
     }
 
@@ -147,30 +141,33 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     /** Image d'étiquette prête à dessiner, avec sa taille. */
     private record Img(PreparedImage image, int w, int h) { }
 
+    /** Bords gauche et droit d'une poignée à l'écran, en pixels. */
+    private record Span(int left, int right) { }
+
     // ---------- État ----------
     private String alias;
     private double pips;
     private PriceGrid grid;
-    private double multiplier = Double.NaN;     // valeur d'un mouvement de 1.0 de prix pour 1 contrat, NaN si inconnue
+    private double multiplier = Double.NaN;     // valeur d'un point pour 1 contrat, NaN si inconnue
     private Api api;
-    private volatile boolean running;           // faux après stop() : plus aucun ordre n'est envoyé
+    private volatile boolean running;           // faux après stop() : plus aucun ordre envoyé
 
     private volatile int bestBid = Integer.MIN_VALUE, bestAsk = Integer.MAX_VALUE;
     private volatile long lastPnlRedraw;
     private final Map<String, OrderInfo> orders = new ConcurrentHashMap<>();
 
-    /** Sens, taille et prix moyen de la position : statut de Bookmap s'il est envoyé, sinon exécutions. */
+    /** Position : statut de Bookmap s'il existe, sinon exécutions. */
     private final PositionTracker tracker = new PositionTracker();
-    /** Dernière taille de position traitée, pour repérer un scale in / scale out. */
+    /** Dernière position traitée, pour repérer un scale in / out. */
     private int lastPosition;
-    /** Ordres actifs posés par les poignées (orderId), reconnus à leur clientId : les seuls que l'add-on redimensionne. */
+    /** Ordres posés par les poignées : les seuls que l'add-on redimensionne. */
     private final Map<String, Boolean> ownOrders = new ConcurrentHashMap<>();
 
     private volatile Notice notice;
-    /** Heure du dernier envoi de chaque poignée (indice = Handle.ordinal()). */
+    /** Dernier envoi de chaque poignée, par Handle.ordinal(). */
     private final long[] sentAt = new long[Handle.values().length];
 
-    /** Une vue par painter : Bookmap en recrée un (avec de nouveaux canvas) à chaque rechargement du chart. */
+    /** Une vue par painter : Bookmap en recrée un à chaque rechargement du chart. */
     private final List<View> views = new CopyOnWriteArrayList<>();
 
     // ======================================================================
@@ -240,7 +237,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     private void redrawAll() { views.forEach(View::redraw); }
 
-    /** Affiche un message sur le chart pendant quelques secondes, et le recopie dans le log Bookmap. */
+    /** Message temporaire sur le chart, recopié dans le log. */
     private void showNotice(String text, double level) {
         Log.warn("Trade Pro: " + text + " @ " + fmt(level));
         notice = new Notice(text, level, System.currentTimeMillis() + NOTICE_MS);
@@ -256,9 +253,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     @Override
     public void onBbo(int bidPrice, int bidSize, int askPrice, int askSize) {
         boolean moved = bidPrice != bestBid || askPrice != bestAsk;
-        bestBid = bidPrice;   // en niveaux de prix (prix / pips)
+        bestBid = bidPrice;   // en niveaux de prix
         bestAsk = askPrice;
-        // PnL affiché sur la position : on redessine quand le marché bouge, sans dépasser 5 fois par seconde
+        // PnL de la position : 5 redessins par seconde au plus
         long now = System.currentTimeMillis();
         if (moved && position() != 0 && now - lastPnlRedraw >= 200) {
             lastPnlRedraw = now;
@@ -276,14 +273,14 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             orders.remove(u.orderId);
             ownOrders.remove(u.orderId);
         }
-        tracker.onOrder(u.orderId, u.isBuy);      // le sens de l'ordre sert à signer ses exécutions
+        tracker.onOrder(u.orderId, u.isBuy);      // le sens de l'ordre signe ses exécutions
         positionMayHaveChanged();
         redrawAll();
     }
 
     @Override
     public void onOrderExecuted(ExecutionInfo ex) {
-        // Sans identifiant d'exécution, on en fabrique un pour ne pas recompter une exécution rejouée
+        // Sans executionId, une clé maison évite de recompter une exécution rejouée
         String key = ex.executionId != null && !ex.executionId.isEmpty() ? ex.executionId
                 : ex.orderId + "|" + ex.time + "|" + ex.price + "|" + ex.size;
         tracker.onExecution(ex.orderId, key, toRealPrice(ex.price), ex.size);
@@ -306,10 +303,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return false;
     }
 
-    /**
-     * Scale in / scale out : quand la position grossit ou diminue sans changer de sens, les TP / SL posés par les
-     * poignées prennent sa nouvelle taille. À la fermeture ou au retournement, l'add-on ne fait rien.
-     */
+    /** Scale in / out : les TP / SL des poignées prennent la nouvelle taille. Rien à la fermeture ni au retournement. */
     private synchronized void positionMayHaveChanged() {
         int now = position(), before = lastPosition;
         if (now == before) return;
@@ -324,10 +318,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         }
     }
 
-    /**
-     * Selon le fournisseur, un prix d'exécution ou un prix moyen arrive en prix réel ou déjà en niveaux.
-     * On tranche une seule fois, à la réception, en gardant l'interprétation la plus proche du marché.
-     */
+    /** Prix reçu en prix réel ou en niveaux selon le fournisseur : on garde le plus proche du marché. */
     private double toRealPrice(double p) {
         if (!bboKnown()) return p;
         double bid = bestBid * pips;
@@ -342,15 +333,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return Double.isNaN(avg) ? Double.NaN : grid.level(avg);
     }
 
-    /** Ordre que pose une poignée pour sortir de cette position : on sort d'un long en vendant, d'un short en achetant. */
+    /** Ordre de sortie d'une poignée : vente pour un long, achat pour un short. */
     private static Mode exitMode(Handle h, int position) {
         return Mode.of(position < 0, h == Handle.SL);
     }
 
-    /**
-     * Rôle d'un ordre par rapport à la position : TP si c'est une limite de sortie, SL si c'est un stop de sortie,
-     * null sinon (ordre d'entrée, ou pas de position). Purement visuel, quelle que soit l'origine de l'ordre.
-     */
+    /** TP pour une limite de sortie, SL pour un stop de sortie, null sinon. */
     private static Handle roleOf(OrderInfo o, int position) {
         if (position == 0 || o.isBuy != (position < 0)) return null;
         if (o.type == OrderType.LMT) return Handle.TP;
@@ -358,10 +346,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return null;
     }
 
-    /**
-     * Nombre de contrats de la position que cette poignée peut encore couvrir : la taille de la position moins
-     * les ordres de sortie du même rôle déjà en place (poignée, TCP ou bracket Bookmap). 0 = poignée masquée.
-     */
+    /** Contrats que cette poignée peut encore couvrir ; 0 = poignée masquée. */
     private int remaining(Handle h, int position) {
         if (System.currentTimeMillis() - sentAt[h.ordinal()] < SENT_HIDE_MS) return 0;   // ordre envoyé, pas encore affiché
         int covered = 0;
@@ -376,10 +361,10 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private final ScreenSpaceCanvas heat, ladder;
     private final List<CanvasShape> heatShapes = new ArrayList<>();
     private final List<CanvasShape> ladderShapes = new ArrayList<>();
-    private final List<CanvasShape> tags = new ArrayList<>();       // étiquettes ajoutées en dernier, au-dessus des lignes
-    /** Étiquettes déjà placées dans ce dessin : {niveau, x gauche, x droite, hauteur}, pour décaler celles qui se chevauchent. */
+    private final List<CanvasShape> tags = new ArrayList<>();       // dessinées en dernier, au-dessus des lignes
+    /** Étiquettes placées : {niveau, x gauche, x droite, hauteur}, pour éviter les chevauchements. */
     private final List<double[]> placed = new ArrayList<>();
-    /** Images réutilisées d'un dessin à l'autre : la souris redessine à chaque mouvement. */
+    /** Cache d'images : la souris redessine à chaque mouvement. */
     private final Map<String, PreparedImage> lineCache = new HashMap<>();
     private final Map<String, Img> labelCache = new HashMap<>();
     private boolean disposed;
@@ -391,18 +376,18 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private volatile int mouseX;
     private volatile double mouseLevel;
     private volatile boolean mouseOnLadder;
-    /** Bords gauche et droit de chaque poignée au dernier dessin : {x1, x2} par Handle.ordinal(), vides si absente. */
-    private volatile int[] handleX = new int[2 * Handle.values().length];
+    /** Bords des poignées au dernier dessin ; table figée, remplacée d'un bloc. */
+    private volatile Map<Handle, Span> handleSpans = Map.of();
 
     private volatile Handle dragHandle;
     private volatile String dragId;
     private volatile double dragLevel;
     private volatile double pressLevel;
-    private volatile int pressSign;             // sens de la position au clic sur une poignée : +1 long, -1 short
-    private volatile boolean dragMoved;         // faux tant que la souris n'a pas bougé de DRAG_MIN_PX depuis le clic
+    private volatile int pressSign;             // sens de la position au clic : +1 long, -1 short
+    private volatile boolean dragMoved;         // vrai après DRAG_MIN_PX de mouvement
 
     final ScreenSpacePainter painter = new ScreenSpacePainterAdapter() {
-        // Bookmap envoie les changements par lot : on note qu'il faut redessiner, et on le fait une fois dans onMoveEnd
+        // Changements reçus par lot : un seul redessin dans onMoveEnd
         private boolean dirty;
 
         @Override public void onHeatmapFullPixelsWidth(int w) { heatW = w; dirty = true; }
@@ -447,7 +432,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     //  Souris
     // ======================================================================
     private final class Mouse implements CanvasMouseListener {
-        /** Vrai pour la zone à droite de la timeline, où sont ancrées les poignées TP / SL. */
+        /** Vrai pour la zone à droite de la timeline. */
         private final boolean onLadder;
         Mouse(boolean onLadder) { this.onLadder = onLadder; }
 
@@ -462,14 +447,14 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         public int getEventScore(CanvasMouseEvent e) {
             MouseEvent src = e.sourceEvent;
             int id = src.getID();
-            if (id == MouseEvent.MOUSE_WHEEL) return MouseModuleScore.NONE.score;   // le zoom reste à Bookmap, même pendant un drag
+            if (id == MouseEvent.MOUSE_WHEEL) return MouseModuleScore.NONE.score;   // le zoom reste à Bookmap
             if (dragId != null || dragHandle != null) return HIGH_SCORE;
             if (id == MouseEvent.MOUSE_MOVED || id == MouseEvent.MOUSE_ENTERED
                     || id == MouseEvent.MOUSE_EXITED) {
                 track(e);
-                return MouseModuleScore.MIN.score;       // on observe sans voler la main
+                return MouseModuleScore.MIN.score;       // observer sans prendre la main
             }
-            // Le clic droit reste à Bookmap (menu) : on ne prend que le clic gauche sur une cible
+            // Le clic droit reste à Bookmap : on ne prend que le clic gauche sur une cible
             if (!SwingUtilities.isLeftMouseButton(src)) return MouseModuleScore.NONE.score;
             track(e);
             return (handleHere() != null || orderNear(mouseLevel) != null)
@@ -499,7 +484,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             track(e);
             MouseEvent src = e.sourceEvent;
             if (dragId != null || dragHandle != null) {
-                // clic droit (ou tout autre bouton) pendant un drag : on abandonne, rien n'est envoyé
+                // autre bouton pendant un drag : abandon
                 if (!SwingUtilities.isLeftMouseButton(src)) { cancelDrag(); redraw(); }
                 return;
             }
@@ -508,7 +493,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             dragLevel = mouseLevel;
             dragMoved = false;
             pressSign = Integer.signum(position());
-            // Un ordre existant passe avant une poignée qui le chevauche : on déplace ce qui est déjà au marché
+            // Un ordre existant passe avant une poignée
             OrderInfo o = orderNear(mouseLevel);
             if (o != null) {
                 dragId = o.orderId;
@@ -533,13 +518,13 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             boolean moved = dragMoved;
             cancelDrag();
             if (!SwingUtilities.isLeftMouseButton(e.sourceEvent) || !moved || disposed || !running) {
-                redraw();       // simple clic, drag abandonné ou add-on arrêté : aucun ordre
+                redraw();       // clic simple, drag abandonné ou add-on arrêté
                 return;
             }
-            int target = (int) Math.round(mouseLevel);      // le prix du relâchement, pas celui du dernier mouvement
+            int target = (int) Math.round(mouseLevel);      // prix du relâchement
             if (hd != null) placeExit(hd, target, pressSign);
             OrderInfo o = id == null ? null : orders.get(id);
-            if (o != null && target != Math.round(orderLevel(o))) {     // même niveau : pas de modification inutile
+            if (o != null && target != Math.round(orderLevel(o))) {     // même niveau : rien à envoyer
                 String refusal = refusal(modeOf(o), target);
                 if (refusal == null) moveOrder(o, target);
                 else showNotice("Move rejected: " + refusal, target);
@@ -558,10 +543,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     private double pxPerLevel() { return heatH / (double) priceH; }
 
-    /**
-     * Ordre déplaçable le plus proche de ce niveau. À droite de la timeline la tolérance couvre toute la hauteur
-     * de l'étiquette : un clic sur le bord de l'étiquette ne doit pas tomber à côté et devenir un ordre Bookmap.
-     */
+    /** Ordre déplaçable le plus proche. À droite de la timeline, la tolérance couvre l'étiquette. */
     private OrderInfo orderNear(double level) {
         OrderInfo best = null;
         double bestDist = mouseOnLadder ? LABEL_GRAB_PX : GRAB_PX;
@@ -573,26 +555,22 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return best;
     }
 
-    /** X du centre d'une étiquette de largeur w, gardée entière dans la zone à droite de la timeline. */
+    /** Centre d'une étiquette de largeur w, gardée dans la zone à droite de la timeline. */
     private int tagCenter(int w) {
         int c = ladderW * tagPos / 100;
         return Math.max(w / 2, Math.min(ladderW - w / 2, c));
     }
 
-    /**
-     * Poignée sous le pointeur. Les poignées sont sur la ligne de la position, à gauche de son étiquette : il faut
-     * être à la hauteur de la position et entre les bords de la poignée (élargis de la moitié de l'espace qui les
-     * sépare, pour qu'un clic entre deux poignées ne devienne pas un ordre Bookmap).
-     */
+    /** Poignée sous le pointeur ; la marge couvre l'espace entre deux poignées. */
     private Handle handleNear(double level) {
         double pos = positionLevel();
         if (Double.isNaN(pos) || Math.abs(pos - level) * pxPerLevel() > HANDLE_GRAB_PX) return null;
-        int[] xs = handleX;
+        Map<Handle, Span> spans = handleSpans;
         int x = mouseX, slack = HANDLE_SPACE_PX / 2;
         for (Handle h : Handle.values()) {
-            if (remaining(h, position()) == 0) continue;     // déjà couvert par un ordre en place
-            int i = 2 * h.ordinal();
-            if (xs[i + 1] > xs[i] && x >= xs[i] - slack && x < xs[i + 1] + slack) return h;
+            if (remaining(h, position()) == 0) continue;     // déjà couverte
+            Span span = spans.get(h);
+            if (span != null && x >= span.left() - slack && x < span.right() + slack) return h;
         }
         return null;
     }
@@ -615,7 +593,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         int position = position();
         double pos = positionLevel();
         boolean moving = dragMoved;
-        if (Double.isNaN(pos)) handleX = new int[2 * Handle.values().length];
+        if (Double.isNaN(pos)) handleSpans = Map.of();
         if (!Double.isNaN(pos)) {
             int size = Math.abs(position);
             Color pc = position > 0 ? posColor : shortColor;
@@ -625,13 +603,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                 add(ladderShapes, l, icon(line(ladderW, pw, pc, false), px(0), dataY(pos, -pw / 2 - (pw % 2)),
                         px(ladderW), dataY(pos, pw / 2)));
             }
-            // PnL latent au prix de sortie immédiat : le bid pour un long, l'ask pour un short
+            // PnL au prix de sortie : bid pour un long, ask pour un short
             String pnl = bboKnown() ? "  " + pnl(position > 0 ? bestBid : bestAsk, pos, size, position, posTicks) : "";
             Img posImg = labelImg(size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl,
                     idleFill(posOpacity), false);
-            // Les poignées TP / SL sont sur la même ligne, à gauche de l'étiquette de la position, qui garde sa place
-            // (sauf s'il n'y a pas la place à gauche : elle se pousse alors vers la droite)
-            int[] xs = new int[2 * Handle.values().length];
+            // Poignées à gauche de l'étiquette de la position, décalée à droite si la place manque
+            Map<Handle, Span> spans = new EnumMap<>(Handle.class);
             int handlesW = 0;
             for (Handle hd : Handle.values()) {
                 if (remaining(hd, position) > 0) handlesW += labelImg(hd.toString(), labelBg, true).w() + HANDLE_SPACE_PX;
@@ -641,25 +618,24 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             for (Handle hd : Handle.values()) {
                 if (remaining(hd, position) == 0) continue;
                 int w = labelImg(hd.toString(), labelBg, true).w();
-                xs[2 * hd.ordinal()] = nextX;
-                xs[2 * hd.ordinal() + 1] = nextX + w;
+                spans.put(hd, new Span(nextX, nextX + w));
                 nextX += w + HANDLE_SPACE_PX;
             }
-            handleX = xs;
+            handleSpans = Map.copyOf(spans);
             place(pos, posImg, posX);
-            // Poignée sous le pointeur (celle qu'un clic attraperait) : affichée opaque, comme un bouton survolé
+            // Poignée survolée : fond opaque
             Handle hover = dragHandle != null ? dragHandle
                     : mouseIn && mouseOnLadder && dragId == null && orderNear(mouseLevel) == null
                             ? handleNear(mouseLevel) : null;
             for (Handle hd : Handle.values()) {
                 int left = remaining(hd, position);
-                if (left == 0) continue;        // toute la position a déjà son TP (ou SL) : pas de poignée
+                if (left == 0) continue;        // position déjà couverte
                 if (hd == dragHandle && moving) {
                     int lvl = (int) Math.round(dragLevel);
                     Mode em = exitMode(hd, position);
                     String refusal = refusal(em, lvl);
                     if (refusal != null && bboKnown()) {
-                        // Mauvais côté du marché : la poignée posera une limite au meilleur prix (voir insideLevel)
+                        // Mauvais côté : limite au meilleur prix (insideLevel)
                         int inside = insideLevel(hd, em.buy);
                         hLine(lvl, colorOf(hd), true, Math.max(2, widthOf(hd)));
                         tag(lvl, left + " " + insideName(hd, em.buy) + "  " + fmt(inside) + "  "
@@ -673,19 +649,20 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                     }
                 } else {
                     Color fill = labelHot;
-                    if (hd != hover) {      // au repos : opacité réglée pour ce rôle, comme le label de position
+                    if (hd != hover) {      // au repos : opacité du rôle
                         fill = idleFill(opacityOf(hd));
                     }
-                    place(pos, labelImg(hd.toString(), fill, true), xs[2 * hd.ordinal()]);
+                    // couverte entre-temps : rien à afficher
+                    Span span = spans.get(hd);
+                    if (span != null) place(pos, labelImg(hd.toString(), fill, true), span.left());
                 }
             }
         }
 
-        // 1) Ordres actifs : un ordre de sortie de la position s'affiche comme TP (limite) ou SL (stop)
-        // Ordre sous le pointeur (celui qu'un clic attraperait) : étiquette opaque et ligne épaissie
+        // 1) Ordres actifs : une sortie s'affiche en TP ou SL ; l'ordre survolé est mis en avant
         OrderInfo hoverOrder = mouseIn && dragId == null && dragHandle == null ? orderNear(mouseLevel) : null;
         for (OrderInfo o : orders.values()) {
-            if (Double.isNaN(orderLevel(o))) continue;      // ordre au marché : pas de prix, pas de ligne
+            if (Double.isNaN(orderLevel(o))) continue;      // ordre au marché : pas de ligne
             boolean dragging = moving && o.orderId.equals(dragId);
             boolean hot = o.orderId.equals(dragId) || (hoverOrder != null && o.orderId.equals(hoverOrder.orderId));
             double lvl = dragging ? Math.round(dragLevel) : orderLevel(o);
@@ -732,12 +709,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     /**
-     * Étiquette à droite de la timeline (ordre, position, poignée), centrée sur la position horizontale réglée.
-     * Si elle recouvrirait une étiquette déjà placée à un prix voisin, elle est décalée à sa droite.
-     */
-    /**
-     * @param big    étiquette plus large : les poignées, pour être faciles à viser
-     * @param fill   fond de l'étiquette (labelBg au repos, labelHot sous le pointeur)
+     * Étiquette à droite de la timeline, décalée à droite si elle en chevauche une autre.
+     * @param big  plus large, pour les poignées
+     * @param fill fond de l'étiquette
      */
     private void tag(double level, String text, boolean big, Color fill) {
         Img img = labelImg(text, fill, big);
@@ -756,7 +730,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         place(level, img, x);
     }
 
-    /** Pose une étiquette à cet endroit précis, et la note pour que les suivantes ne la recouvrent pas. */
+    /** Pose une étiquette à cet endroit et la note dans placed. */
     private void place(double level, Img img, int x) {
         placed.add(new double[] { level, x, x + img.w(), img.h() });
         tags.add(icon(img.image(), px(x), dataY(level, -img.h() / 2),
@@ -784,14 +758,13 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     //  Ordres
     // ======================================================================
     /**
-     * Pose l'ordre de sortie d'une poignée : limite (TP) ou stop (SL), pour la partie de la position qui n'a pas
-     * encore d'ordre de sortie de ce type. Relâchée du mauvais côté du marché, elle pose une limite au meilleur prix.
-     * L'add-on le redimensionne ensuite avec la position (scale in / scale out), mais ne l'annule jamais.
-     * @param pressSign sens de la position au début du geste ; si elle a changé depuis, rien n'est envoyé
+     * Pose l'ordre de sortie d'une poignée pour la partie non couverte de la position.
+     * Du mauvais côté du marché, c'est une limite au meilleur prix.
+     * @param pressSign sens de la position au clic ; s'il a changé, rien n'est envoyé
      */
     private void placeExit(Handle h, int level, int pressSign) {
         if (!running) return;
-        int pos = position();       // lu une seule fois : la taille et le sens viennent de la même position
+        int pos = position();       // lu une fois : taille et sens cohérents
         if (pos == 0 || Integer.signum(pos) != pressSign) {
             showNotice(h + " cancelled: position changed during the drag", level);
             return;
@@ -801,8 +774,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             showNotice(h + " rejected: no market data", level);
             return;
         }
-        // Relâché du mauvais côté du marché (l'ordre partirait tout de suite) : on sort par une limite au meilleur
-        // prix, comme les boutons de Bookmap (voir insideLevel).
+        // Mauvais côté du marché : limite au meilleur prix (insideLevel)
         boolean inside = refusal(m, level) != null;
         if (inside) {
             m = Mode.of(m.buy, false);
@@ -816,7 +788,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         double price = grid.price(level);
         SimpleOrderSendParametersBuilder b = new SimpleOrderSendParametersBuilder(alias, m.buy, size);
         if (m.stop) b.setStopPrice(price); else b.setLimitPrice(price);
-        b.setClientId(h.prefix() + UUID.randomUUID());      // pour reconnaître l'ordre et le redimensionner ensuite
+        b.setClientId(h.prefix() + UUID.randomUUID());      // pour reconnaître l'ordre ensuite
         sentAt[h.ordinal()] = System.currentTimeMillis();
         api.sendOrder(b.build());
         String kind = inside ? insideName(h, m.buy) : m.label;
@@ -824,9 +796,9 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     /**
-     * Prix de la limite posée par une poignée relâchée du mauvais côté du marché :
-     *  - TP : passif, on prend le profit au meilleur prix sans payer l'écart (SELL ASK pour un long, BUY BID pour un short) ;
-     *  - SL : agressif, on sort tout de suite (SELL BID pour un long, BUY ASK pour un short).
+     * Prix de la limite posée du mauvais côté du marché :
+     *  - TP passif : SELL ASK pour un long, BUY BID pour un short
+     *  - SL agressif : SELL BID pour un long, BUY ASK pour un short
      */
     private int insideLevel(Handle h, boolean buy) {
         boolean atBid = (h == Handle.TP) == buy;
@@ -838,16 +810,13 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return (buy ? "BUY " : "SELL ") + (atBid ? "BID" : "ASK");
     }
 
-    /** Vrai si le meilleur bid et le meilleur ask forment un vrai carnet (un 0 / 0 d'attente ne compte pas). */
+    /** Vrai si le carnet est connu (un 0 / 0 d'attente ne compte pas). */
     private boolean bboKnown() {
         int bid = bestBid, ask = bestAsk;
         return bid != Integer.MIN_VALUE && ask != Integer.MAX_VALUE && ask > bid;
     }
 
-    /**
-     * Raison de refuser un ordre à ce niveau, ou null s'il peut partir. Un ordre est refusé s'il s'exécuterait
-     * tout de suite (mauvais côté du marché), ou si le carnet n'est pas connu et qu'on ne peut donc pas en juger.
-     */
+    /** Raison de refuser un ordre à ce niveau (exécution immédiate, carnet inconnu), null sinon. */
     private String refusal(Mode m, int level) {
         if (m == null) return "order cannot be moved";
         if (!bboKnown()) return "no market data";
@@ -870,7 +839,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         if (o.type == null) return;
         switch (o.type) {
             case STP_LMT -> {
-                double shift = p - o.stopPrice;         // la limite suit le déclenchement, avec le même écart
+                double shift = p - o.stopPrice;         // la limite garde son écart au stop
                 api.updateOrder(new OrderMoveParameters(o.orderId, p, o.limitPrice + shift));
             }
             case STP -> api.updateOrder(new OrderMoveParameters(o.orderId, p, Double.NaN));
@@ -885,16 +854,12 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return grid.level(stop ? o.stopPrice : o.limitPrice);
     }
 
-    /** Gain ou perte d'un TP / SL à ce niveau, dans l'unité réglée pour les TP / SL. */
+    /** Gain / perte d'un TP / SL, dans l'unité réglée pour les TP / SL. */
     private String distance(double level, double posLevel, int size, int position) {
         return pnl(level, posLevel, size, position, exitTicks);
     }
 
-    /**
-     * Gain ou perte si la position sort à ce niveau : en argent pour la taille donnée ("+$250.00" / "-$125.00"),
-     * ou en ticks par contrat ("+12 t"). Toujours en ticks quand la valeur du point de l'instrument est inconnue,
-     * plutôt qu'un montant faux.
-     */
+    /** Gain / perte si la position sort à ce niveau, en argent ou en ticks (ticks si la valeur du point est inconnue). */
     private String pnl(double level, double posLevel, int size, int position, boolean inTicks) {
         double ticks = (level - posLevel) * (position > 0 ? 1 : -1);
         if (inTicks || Double.isNaN(multiplier)) return String.format("%+.0f t", ticks);
@@ -947,25 +912,23 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     private static final Font FONT = uiFont(12f);
 
-    /** Police de l'interface Bookmap (Roboto embarquée) ; police système si elle est introuvable. */
+    /** Police de Bookmap (Roboto), sinon police système. */
     private static Font uiFont(float size) {
         try (InputStream in = Log.class.getResourceAsStream("/resources/fonts/roboto/RobotoBm-Medium.ttf")) {
             if (in != null) return Font.createFont(Font.TRUETYPE_FONT, in).deriveFont(size);
         } catch (Exception e) {
-            // on retombe sur la police système
+            // police système
         }
         return new Font(Font.SANS_SERIF, Font.BOLD, (int) size);
     }
 
-    /**
-     * Étiquette au style de Bookmap : rectangle arrondi, texte blanc.
-     */
+    /** Étiquette au style de Bookmap : rectangle arrondi, texte blanc. */
     private static BufferedImage label(String text, Color fill, boolean big) {
         BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D pg = probe.createGraphics();
         FontMetrics fm = pg.getFontMetrics(FONT);
         pg.dispose();
-        // Les poignées ont la hauteur des autres étiquettes : elles sont sur la même ligne que celle de la position
+        // Poignées à la même hauteur : elles sont sur la ligne de la position
         int padX = big ? 12 : 7, padY = 2;
         int w = fm.stringWidth(text) + 2 * padX, h = fm.getHeight() + 2 * padY;
 
@@ -975,7 +938,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setColor(fill);
         g.fillRoundRect(0, 0, w, h, 6, 6);
-        // étiquette translucide (poignée au repos) : le texte s'efface avec elle
+        // fond translucide : texte atténué aussi
         int ink = fill.getAlpha() < 255 ? Math.min(255, fill.getAlpha() + 80) : 255;
         g.setColor(new Color(255, 255, 255, ink));
         g.setFont(FONT);
@@ -1018,19 +981,19 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         slider.setToolTipText(String.valueOf(tagPos));
         slider.addChangeListener(e -> {
             tagPos = slider.getValue();
-            value.setText(caption + tagPos);                    // valeur choisie, visible pendant le glissement
+            value.setText(caption + tagPos);                    // visible pendant le glissement
             slider.setToolTipText(String.valueOf(tagPos));
-            if (slider.getValueIsAdjusting()) redrawAll();      // l'aperçu suit le curseur, l'enregistrement attend le relâchement
+            if (slider.getValueIsAdjusting()) redrawAll();      // aperçu ; enregistré au relâchement
             else settingsChanged();
         });
         JPanel tagsPanel = pair(value, slider);
 
-        // L'API ne donne pas à un add-on la position déjà ouverte : il ne peut que suivre celles ouvertes après son activation
         JPanel pnlPanel = verticalBox();
         pnlPanel.add(pair(new JLabel("Position"), unitBox(posTicks, t -> posTicks = t)));
         pnlPanel.add(gap());
         pnlPanel.add(pair(new JLabel("Take profit / Stop loss"), unitBox(exitTicks, t -> exitTicks = t)));
 
+        // L'API ne donne pas la position déjà ouverte à l'activation
         JPanel warning = verticalBox();
         warning.add(new FittingLabel("Enable Trade Pro only when you are flat.", true));
         warning.add(gap());
@@ -1043,7 +1006,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             section("Label position", tagsPanel, 4, TEXT_INDENT) };
     }
 
-    /** Retrait que le sélecteur de couleur de Bookmap donne à son libellé : les autres sections s'alignent dessus. */
+    /** Retrait du libellé des couleurs de Bookmap, repris par les autres sections. */
     private static final int TEXT_INDENT = 10;
 
     private static JPanel verticalBox() {
@@ -1053,14 +1016,14 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return panel;
     }
 
-    /** Espace vertical aligné à gauche : un strut centré empêche BoxLayout d'étirer la ligne sur toute la largeur. */
+    /** Espace vertical aligné à gauche, pour que BoxLayout n'étire pas la ligne. */
     private static Component gap() {
         JComponent gap = (JComponent) Box.createVerticalStrut(6);
         gap.setAlignmentX(Component.LEFT_ALIGNMENT);
         return gap;
     }
 
-    /** Libellé à gauche, contrôle à droite. Le contrôle garde sa largeur ; le libellé prend le reste. */
+    /** Libellé à gauche, contrôle à droite à sa largeur. */
     private static JPanel pair(JComponent label, JComponent control) {
         JPanel row = new JPanel(new GridBagLayout());
         row.setOpaque(false);
@@ -1093,11 +1056,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         lines.add(opacity, lineCell(row, 3));
     }
 
-    /**
-     * Colonne du nom extensible, les trois contrôles à leur largeur naturelle.
-     * Une grille égale (GridLayout) prenait quatre fois la colonne la plus large — l'en-tête
-     * « Label opacity % » — et Bookmap, qui impose la largeur du dialogue, rognait le texte.
-     */
+    /** Colonne du nom extensible, contrôles à leur largeur : une grille égale rognait « Label opacity % ». */
     private static GridBagConstraints lineCell(int row, int col) {
         GridBagConstraints g = new GridBagConstraints();
         g.gridx = col;
@@ -1109,7 +1068,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return g;
     }
 
-    /** Section du panneau de réglages : le contenu, avec une marge intérieure pour ne pas toucher le cadre. */
+    /** Section du panneau de réglages, avec une marge intérieure. */
     private static StrategyPanel section(String title, JPanel body, int top, int left) {
         body.setBorder(BorderFactory.createEmptyBorder(top, left, 6, 4));
         body.setOpaque(false);
@@ -1119,21 +1078,15 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     /**
-     * Le dialogue des études s'ouvre à une largeur fixe (820 px, 900 en français) et la ramène
-     * à 1300 si on la dépasse. Il n'a pas de défilement horizontal : le contenu est écrasé à
-     * cette largeur. La hauteur du cadre titré n'est connue qu'une fois le panneau affiché,
-     * donc un second passage de mise en page est fait à ce moment-là. La taille minimale reste
-     * nulle pour que le défilement vertical puisse apparaître : Bookmap recopie la minimale du
-     * panneau sur son ascenseur, et une minimale égale à la taille préférée rognait le bas.
+     * Section adaptée au dialogue de Bookmap, sans défilement horizontal. Minimale nulle : Bookmap la recopie
+     * sur l'ascenseur, une minimale pleine rognait le bas. Second passage de mise en page à l'affichage.
      */
     private static final class Section extends StrategyPanel {
         Section(String title) { super(title, new BorderLayout()); }
 
         /**
-         * Largeur demandée plafonnée. Bookmap empile les sections dans un GridBagLayout forcé à la largeur de la
-         * fenêtre : si une seule section demande plus large que la place disponible, GridBagLayout passe toutes
-         * les sections à leur taille minimale (nulle ici) et le panneau s'ouvre vide. Les add-ons de Bookmap
-         * (AVWAP) plafonnent de la même façon, à 372 px. La section est de toute façon étirée à la largeur réelle.
+         * Largeur demandée plafonnée à 372 px, comme AVWAP : au-delà, le GridBagLayout de Bookmap passe toutes
+         * les sections à leur taille minimale et le panneau s'ouvre vide.
          */
         @Override public Dimension getPreferredSize() {
             Dimension preferred = super.getPreferredSize();
@@ -1157,11 +1110,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         }
     }
 
-    /**
-     * Ligne de couleur de Bookmap. Son libellé est verrouillé à 250 px : avec les boutons,
-     * la ligne dépasse la largeur utile du dialogue et les boutons sont rognés. On retire ce
-     * verrou, et la hauteur préférée suit la hauteur minimale (les boutons, sinon coupés).
-     */
+    /** Ligne de couleur de Bookmap, sans le libellé verrouillé à 250 px qui rognait les boutons. */
     private static final class ColorRow extends ColorsConfigItem {
         ColorRow(Color current, Color fallback, String name, java.util.function.Consumer<Color> onPick) {
             super(current, fallback, name, onPick);
@@ -1181,10 +1130,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return new ColorRow(current, fallback, name, onPick);
     }
 
-    /**
-     * Texte qui passe à la ligne quand Bookmap rétrécit le panneau, et qui redemande alors
-     * la hauteur correspondante. Un JLabel simple est coupé, il ne revient pas à la ligne.
-     */
+    /** Texte qui revient à la ligne quand le panneau rétrécit, et ajuste sa hauteur. */
     private static final class FittingLabel extends JLabel {
         FittingLabel(String text, boolean bold) {
             super("<html>" + text + "</html>");
@@ -1249,7 +1195,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     private void saveSettings() {
-        if (api == null) return;        // panneau ouvert avant l'activation sur un instrument
+        if (api == null) return;        // panneau ouvert avant l'activation
         Settings st = new Settings();
         st.posColor = posColor.getRGB();
         st.shortColor = shortColor.getRGB();

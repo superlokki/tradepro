@@ -2,10 +2,7 @@ package com.tradepro;
 
 import java.math.BigDecimal;
 
-/**
- * Conversions entre niveaux de prix (prix / pips, l'unité de la heatmap et du BBO) et prix réels.
- * Sans dépendance à Bookmap, pour pouvoir être testé seul.
- */
+/** Conversions entre niveaux de prix (prix / pips) et prix réels, sans dépendance à Bookmap. */
 final class PriceGrid {
 
     final double pips;
@@ -19,7 +16,7 @@ final class PriceGrid {
         this.decimals = Math.max(0, step.scale());
     }
 
-    /** Prix réel d'un niveau entier, calculé en décimal : 3 x 0,1 donne 0,3 et non 0,30000000000000004. */
+    /** Prix réel d'un niveau, en décimal (3 x 0,1 = 0,3). */
     double price(long level) {
         return step.multiply(BigDecimal.valueOf(level)).doubleValue();
     }

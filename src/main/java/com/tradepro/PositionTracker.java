@@ -8,14 +8,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Suivi de la position d'un instrument, sans dépendance à Bookmap pour pouvoir être testé seul.
- *
- * Deux sources :
- *  - le statut du fournisseur (StatusInfo) : dès qu'il a annoncé une position non nulle, il fait foi,
- *    y compris pour un retour à zéro, et les exécutions ne changent plus la taille ;
- *  - les exécutions, tant qu'aucun statut n'a annoncé de position (tous les fournisseurs n'en envoient pas).
- *
- * Tous les prix sont des prix réels.
+ * Position d'un instrument, en prix réels, sans dépendance à Bookmap (testable seule).
+ *  - statut du fournisseur : fait foi dès qu'il annonce une position non nulle
+ *  - sinon exécutions (tous les fournisseurs n'envoient pas de statut)
  */
 final class PositionTracker {
 
@@ -24,11 +19,11 @@ final class PositionTracker {
     private double lastExecutionPrice = Double.NaN;
     private boolean statusDriven;
 
-    /** Sens de chaque ordre vu, pour signer les exécutions (qui ne portent que l'orderId). */
+    /** Sens de chaque ordre, pour signer ses exécutions. */
     private final Map<String, Boolean> sides = new HashMap<>();
-    /** Exécutions déjà comptées : Bookmap peut les rejouer, par exemple à un changement de compte. */
+    /** Exécutions comptées : Bookmap peut les rejouer. */
     private final Set<String> seen = new HashSet<>();
-    /** Exécutions arrivées avant la mise à jour de leur ordre : {prix, taille}, rejouées quand le sens est connu. */
+    /** Exécutions arrivées avant leur ordre : {prix, taille}. */
     private final Map<String, List<double[]>> waiting = new HashMap<>();
 
     synchronized void reset() {
@@ -55,7 +50,7 @@ final class PositionTracker {
     }
 
     /**
-     * @param executionKey identifiant unique de l'exécution, ou null s'il est inconnu (elle est alors toujours comptée)
+     * @param executionKey identifiant unique, ou null (toujours comptée)
      */
     synchronized void onExecution(String orderId, String executionKey, double price, int size) {
         if (size <= 0) return;
@@ -74,7 +69,7 @@ final class PositionTracker {
      */
     synchronized void onStatus(int newPosition, double price) {
         if (newPosition != 0) statusDriven = true;
-        if (!statusDriven) return;              // jamais de position annoncée : ce fournisseur ne la suit peut-être pas
+        if (!statusDriven) return;              // aucune position annoncée : statut ignoré
         int before = position;
         boolean known = !Double.isNaN(price) && !Double.isInfinite(price) && price > 0;
         if (newPosition == 0) {
@@ -82,14 +77,14 @@ final class PositionTracker {
         } else if (known) {
             averagePrice = price;
         } else if (before == 0 || (before > 0) != (newPosition > 0) || Double.isNaN(averagePrice)) {
-            averagePrice = lastExecutionPrice;   // prix moyen non fourni : la dernière exécution, faute de mieux
+            averagePrice = lastExecutionPrice;   // prix moyen absent : dernière exécution
         }
         position = newPosition;
     }
 
     private void apply(boolean buy, double price, int size) {
         lastExecutionPrice = price;
-        if (statusDriven) return;                // la taille vient du statut ; l'exécution ne sert qu'au prix
+        if (statusDriven) return;                // taille donnée par le statut
         int before = position;
         int after = before + (buy ? size : -size);
         if (after == 0) {
