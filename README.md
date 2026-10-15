@@ -9,7 +9,7 @@ Trade Pro adds a position line and draggable take-profit / stop-loss handles to 
 - **Move orders with the mouse**: grab any working order line and release it at the new price. Right-click during the drag to cancel.
 - **Scale in / scale out**: when the position grows or shrinks, the TP and SL placed with the handles take its new size.
 - **Several instruments at once**: enable it on each instrument you trade. Each chart has its own position, handles and settings.
-- **Looks like Bookmap**: labels use Bookmap's own order-label style, and turn blue under the pointer.
+- **Looks like Bookmap**: labels have the size and font of Bookmap's order labels, and turn the same translucent blue under the pointer.
 
 Profit and loss is shown in money or in ticks, your choice in the settings. Money needs the instrument's point value: when Bookmap does not know it, ticks are shown.
 
@@ -25,7 +25,7 @@ Trading must be enabled in Bookmap's TCP. Tested on Bookmap 8.0.
 
 - **Enable it only when you are flat.** Bookmap does not tell an add-on about a position that is already open, so Trade Pro would show wrong sizes.
 - **It does not cancel your TP or SL when the position closes.** Cancel the remaining order yourself, or use Bookmap's Execution Pro add-on ("Cancel All Orders on Flat"), otherwise it can open a new position.
-- **A simple click sends nothing.** You have to drag at least a few pixels.
+- **A simple click sends nothing.** You have to drag at least a few pixels. A right-click on a Trade Pro label does nothing either: it never reaches Bookmap, so it cannot place an order.
 - **A handle released on the wrong side of the market** places an order at the best price instead of being rejected: a passive one for a TP (SELL ASK / BUY BID), an immediate exit for an SL (SELL BID / BUY ASK).
 - Unsigned add-ons are blocked on Bookmap Data / dxFeed real-time data. Use delayed data, replay, crypto or a broker connection.
 

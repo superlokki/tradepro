@@ -55,12 +55,17 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private static final Color BUY = new Color(8, 153, 129);       // #089981
     private static final Color SELL = new Color(242, 54, 69);       // #F23645
     private static final Color CROSS = new Color(149, 152, 161);    // #9598A1
+    private static final Color CROSS_TAG = new Color(70, 70, 70);   // fond du prix du crosshair
     private static final Color POS = BUY;
     private static final Color POS_SHORT = SELL;
     private static final Color REFUSED = new Color(150, 40, 40);    // ordre refusé
     // Étiquettes au style de Bookmap : fond ardoise, texte blanc
     private static final Color LABEL_BG = new Color(57, 73, 82);
-    private static final Color LABEL_BG_HOT = new Color(12, 113, 160);    // survol ou drag
+    // Survol ou drag : bleu des étiquettes LMT / STP de Bookmap, mesuré à l'écran. Toujours dessiné translucide
+    // (HOT_ALPHA), quelle que soit la couleur choisie dans les réglages, comme chez Bookmap.
+    private static final Color LABEL_BG_HOT = new Color(0, 127, 241);
+    private static final int HOT_ALPHA = 150;                  // environ 59 %
+    private static final int OLD_LABEL_BG_HOT = 0xFF0C71A0;    // ancien bleu par défaut, remplacé s'il est encore enregistré
 
     /** Réglages enregistrés avec le workspace, par instrument. */
     @StrategySettingsVersion(currentVersion = 1, compatibleVersions = {})
@@ -107,13 +112,19 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
 
     private static int clampPercent(int v) { return Math.max(0, Math.min(100, v)); }
 
+    /** Fond d'étiquette survolée ou en drag : la couleur réglée, translucide. */
+    private Color hotFill() {
+        Color c = labelHot;
+        return new Color(c.getRed(), c.getGreen(), c.getBlue(), HOT_ALPHA);
+    }
+
     /** Fond d'étiquette au repos, à l'opacité donnée. */
     private Color idleFill(int percent) {
         Color c = labelBg;
         return percent >= 100 ? c : new Color(c.getRed(), c.getGreen(), c.getBlue(), Math.round(255 * percent / 100f));
     }
     private static final int HANDLE_SPACE_PX = 4;   // entre les poignées et l'étiquette de la position
-    private static final int HANDLE_GRAB_PX = 13;   // demi-hauteur de la poignée, plus 1 px
+    private static final int SCALE_SPAN_PX = 400;   // écart visé entre les deux niveaux mesurés, pour une échelle précise
     private static final int NOTICE_MS = 4_000;     // durée d'un message de refus
     private static final long SENT_HIDE_MS = 3_000; // poignée masquée le temps que son ordre apparaisse
 
@@ -142,8 +153,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     /** Image d'étiquette prête à dessiner, avec sa taille. */
     private record Img(PreparedImage image, int w, int h) { }
 
-    /** Bords gauche et droit d'une poignée à l'écran, en pixels. */
-    private record Span(int left, int right) { }
+    /** Rectangle d'une poignée à l'écran : bords gauche et droit, hauteur, en pixels. */
+    private record Span(int left, int right, int height) { }
 
     // ---------- État ----------
     private String alias;
@@ -195,7 +206,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         tpColor = new Color(st.tpColor);
         slColor = new Color(st.slColor);
         labelBg = new Color(st.labelColor);
-        labelHot = new Color(st.labelHoverColor);
+        labelHot = st.labelHoverColor == OLD_LABEL_BG_HOT ? LABEL_BG_HOT : new Color(st.labelHoverColor);  // sans transparence
         posDashed = st.posDashed;
         tpDashed = st.tpDashed;
         slDashed = st.slDashed;
@@ -374,6 +385,11 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private final List<CanvasShape> heatShapes = new ArrayList<>();
     private final List<CanvasShape> ladderShapes = new ArrayList<>();
     private final List<CanvasShape> tags = new ArrayList<>();       // dessinées en dernier, au-dessus des lignes
+    /** Crosshair, redessiné seul quand la souris bouge sans changer de cible. */
+    private final List<CanvasShape> crossHeat = new ArrayList<>();
+    private final List<CanvasShape> crossLadder = new ArrayList<>();
+    /** Cible survolée au dernier dessin complet (ordre, poignée) ; "" si aucune. */
+    private String lastHover = "";
     /** Étiquettes placées : {niveau, x gauche, x droite, hauteur}, pour éviter les chevauchements. */
     private final List<double[]> placed = new ArrayList<>();
     /** Cache d'images : la souris redessine à chaque mouvement. */
@@ -388,6 +404,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     private volatile int mouseX;
     private volatile double mouseLevel;
     private volatile boolean mouseOnLadder;
+    private volatile double measuredPxPerLevel = Double.NaN;    // NaN si Bookmap n'a pas donné d'écart exploitable
     /** Bords des poignées au dernier dessin ; table figée, remplacée d'un bloc. */
     private volatile Map<Handle, Span> handleSpans = Map.of();
 
@@ -428,6 +445,8 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         views.remove(this);
         heatShapes.clear();
         ladderShapes.clear();
+        crossHeat.clear();
+        crossLadder.clear();
         lineCache.clear();
         labelCache.clear();
         heat.dispose();
@@ -453,7 +472,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             View.this.track(e);
         }
 
-        private Handle handleHere() { return onLadder ? handleNear(mouseLevel) : null; }
+        private Handle handleHere() { return onLadder ? handleNear() : null; }
 
         @Override
         public int getEventScore(CanvasMouseEvent e) {
@@ -463,34 +482,43 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             if (dragId != null || dragHandle != null) return HIGH_SCORE;
             if (id == MouseEvent.MOUSE_MOVED || id == MouseEvent.MOUSE_ENTERED
                     || id == MouseEvent.MOUSE_EXITED) {
-                track(e);
+                hovered(e, id);
                 return MouseModuleScore.MIN.score;       // observer sans prendre la main
             }
-            // Le clic droit reste à Bookmap : on ne prend que le clic gauche sur une cible
+            track(e);
+            // Sur une étiquette (poignée ou ordre, à droite de la timeline), aucun bouton n'atteint Bookmap :
+            // un clic droit y poserait un ordre au prix cliqué. Sur la heatmap, le clic droit reste à Bookmap.
+            boolean target = handleHere() != null || orderNear() != null;
+            if (onLadder && target) return HIGH_SCORE;
             if (!SwingUtilities.isLeftMouseButton(src)) return MouseModuleScore.NONE.score;
-            track(e);
-            return (handleHere() != null || orderNear(mouseLevel) != null)
-                    ? HIGH_SCORE : MouseModuleScore.NONE.score;
+            return target ? HIGH_SCORE : MouseModuleScore.NONE.score;
         }
 
-        @Override public void mouseMoved(CanvasMouseEvent e) {
-            track(e);
+        /**
+         * Survol, traité dès getEventScore : avec un score MIN, Bookmap n'appelle pas toujours mouseMoved,
+         * et le changement de couleur attendait alors le dessin suivant (jusqu'à plusieurs secondes).
+         */
+        private void hovered(CanvasMouseEvent e, int id) {
             Component c = e.sourceEvent.getComponent();
-            if (c != null) {
-                boolean grab = handleHere() != null || orderNear(mouseLevel) != null;
-                c.setCursor(Cursor.getPredefinedCursor(grab ? Cursor.N_RESIZE_CURSOR : Cursor.DEFAULT_CURSOR));
+            if (id == MouseEvent.MOUSE_EXITED) {
+                mouseIn = false;
+                if (c != null) c.setCursor(Cursor.getDefaultCursor());
+                redraw();
+                return;
             }
-            redraw();
+            track(e);
+            String hover = hoverKey();
+            if (c != null) {
+                c.setCursor(Cursor.getPredefinedCursor(hover.isEmpty() ? Cursor.DEFAULT_CURSOR : Cursor.N_RESIZE_CURSOR));
+            }
+            // Même cible qu'au dernier dessin : seul le crosshair bouge
+            if (hover.equals(lastHover)) redrawCross(); else redraw();
         }
 
-        @Override public void mouseEntered(CanvasMouseEvent e) { mouseIn = true; track(e); redraw(); }
-
-        @Override public void mouseExited(CanvasMouseEvent e) {
-            mouseIn = false;
-            Component c = e.sourceEvent.getComponent();
-            if (c != null && dragId == null && dragHandle == null) c.setCursor(Cursor.getDefaultCursor());
-            redraw();
-        }
+        // Déjà traités dans getEventScore (hovered)
+        @Override public void mouseMoved(CanvasMouseEvent e) { }
+        @Override public void mouseEntered(CanvasMouseEvent e) { }
+        @Override public void mouseExited(CanvasMouseEvent e) { }
 
         @Override public void mousePressed(CanvasMouseEvent e) {
             track(e);
@@ -506,7 +534,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             dragMoved = false;
             pressSign = Integer.signum(position());
             // Un ordre existant passe avant une poignée
-            OrderInfo o = orderNear(mouseLevel);
+            OrderInfo o = orderNear();
             if (o != null) {
                 dragId = o.orderId;
             } else {
@@ -549,22 +577,51 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         mouseIn = true;
         mouseX = e.getX(new CompositeHorizontalCoordinate(CompositeCoordinateBase.PIXEL_ZERO, 0, 0),
                 CoordinateRequestType.PIXELS).compose().pixelsX;
-        mouseLevel = e.getY(new CompositeVerticalCoordinate(CompositeCoordinateBase.DATA_ZERO, 0, 0),
+        double level = e.getY(new CompositeVerticalCoordinate(CompositeCoordinateBase.DATA_ZERO, 0, 0),
                 CoordinateRequestType.DATA).compose().dataY;
+        // Pour la souris, la ligne de prix k va de k à k + 1 ; pour le dessin, k est au centre de la ligne.
+        // Sans ce recalage, tout (survol, crosshair, prix du drag) est décalé d'une demi-ligne vers le haut.
+        mouseLevel = level - 0.5;
+        // Échelle mesurée par Bookmap : écart en pixels entre deux niveaux, au lieu de heatH / priceH (arrondi)
+        int n = Math.max(1, (int) Math.ceil(SCALE_SPAN_PX / Math.max(1e-3, heatH / (double) priceH)));
+        double ref = Math.floor(level);
+        int y0 = pixelsFrom(e, ref), y1 = pixelsFrom(e, ref + n);
+        boolean ok = y0 != Integer.MAX_VALUE && y1 != Integer.MAX_VALUE && y0 != y1;
+        measuredPxPerLevel = ok ? Math.abs(y1 - y0) / (double) n : Double.NaN;
     }
 
-    private double pxPerLevel() { return heatH / (double) priceH; }
+    private static int pixelsFrom(CanvasMouseEvent e, double level) {
+        return e.getY(new CompositeVerticalCoordinate(CompositeCoordinateBase.DATA_ZERO, 0, level),
+                CoordinateRequestType.PIXELS).pixelsY;
+    }
+
+    private double pxPerLevel() {
+        double measured = measuredPxPerLevel;
+        return Double.isNaN(measured) ? heatH / (double) priceH : measured;
+    }
+
+    /** Distance verticale en pixels entre la souris et ce niveau. */
+    private double pxFromMouse(double level) { return Math.abs(level - mouseLevel) * pxPerLevel(); }
 
     /** Ordre déplaçable le plus proche. À droite de la timeline, la tolérance couvre l'étiquette. */
-    private OrderInfo orderNear(double level) {
+    private OrderInfo orderNear() {
         OrderInfo best = null;
         double bestDist = mouseOnLadder ? LABEL_GRAB_PX : GRAB_PX;
         for (OrderInfo o : orders.values()) {
             if (modeOf(o) == null) continue;
-            double d = Math.abs(orderLevel(o) - level) * pxPerLevel();
+            double d = pxFromMouse(orderLevel(o));
             if (d <= bestDist) { bestDist = d; best = o; }
         }
         return best;
+    }
+
+    /** Cible sous le pointeur hors drag : "O" + orderId, "H" + poignée, ou "". Même règle que le dessin. */
+    private String hoverKey() {
+        if (!mouseIn) return "";
+        OrderInfo o = orderNear();
+        if (o != null) return "O" + o.orderId;
+        Handle h = mouseOnLadder ? handleNear() : null;
+        return h == null ? "" : "H" + h;
     }
 
     /** Centre d'une étiquette de largeur w, gardée dans la zone à droite de la timeline. */
@@ -573,16 +630,18 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return Math.max(w / 2, Math.min(ladderW - w / 2, c));
     }
 
-    /** Poignée sous le pointeur ; la marge couvre l'espace entre deux poignées. */
-    private Handle handleNear(double level) {
+    /** Poignée sous le pointeur : dans son rectangle, la marge couvrant l'espace entre deux poignées. */
+    private Handle handleNear() {
         double pos = positionLevel();
-        if (Double.isNaN(pos) || Math.abs(pos - level) * pxPerLevel() > HANDLE_GRAB_PX) return null;
+        if (Double.isNaN(pos)) return null;
+        double dy = pxFromMouse(pos);
         Map<Handle, Span> spans = handleSpans;
         int x = mouseX, slack = HANDLE_SPACE_PX / 2;
         for (Handle h : Handle.values()) {
             if (remaining(h, position()) == 0) continue;     // déjà couverte
             Span span = spans.get(h);
-            if (span != null && x >= span.left() - slack && x < span.right() + slack) return h;
+            if (span != null && dy <= span.height() / 2.0 + 1
+                    && x >= span.left() - slack && x < span.right() + slack) return h;
         }
         return null;
     }
@@ -605,6 +664,10 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         int position = position();
         double pos = positionLevel();
         boolean moving = dragMoved;
+        // Cible survolée, lue une seule fois pour tout le dessin (un ordre passe avant une poignée)
+        boolean idle = dragId == null && dragHandle == null;
+        OrderInfo hoverOrder = idle && mouseIn ? orderNear() : null;
+        Handle hoverHandle = null;
         if (Double.isNaN(pos)) handleSpans = Map.of();
         if (!Double.isNaN(pos)) {
             int size = Math.abs(position);
@@ -618,27 +681,26 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             // PnL au prix de sortie : bid pour un long, ask pour un short
             String pnl = bboKnown() ? "  " + pnl(position > 0 ? bestBid : bestAsk, pos, size, position, posTicks) : "";
             Img posImg = labelImg(size + (position > 0 ? " LONG" : " SHORT") + "  " + fmt(pos) + pnl,
-                    idleFill(posOpacity), false);
+                    idleFill(posOpacity));
             // Poignées à gauche de l'étiquette de la position, décalée à droite si la place manque
             Map<Handle, Span> spans = new EnumMap<>(Handle.class);
             int handlesW = 0;
             for (Handle hd : Handle.values()) {
-                if (remaining(hd, position) > 0) handlesW += labelImg(hd.toString(), labelBg, true).w() + HANDLE_SPACE_PX;
+                if (remaining(hd, position) > 0) handlesW += labelImg(hd.toString(), labelBg).w() + HANDLE_SPACE_PX;
             }
             int posX = Math.max(handlesW, tagCenter(posImg.w()) - posImg.w() / 2);
             int nextX = posX - handlesW;
             for (Handle hd : Handle.values()) {
                 if (remaining(hd, position) == 0) continue;
-                int w = labelImg(hd.toString(), labelBg, true).w();
-                spans.put(hd, new Span(nextX, nextX + w));
-                nextX += w + HANDLE_SPACE_PX;
+                Img handle = labelImg(hd.toString(), labelBg);
+                spans.put(hd, new Span(nextX, nextX + handle.w(), handle.h()));
+                nextX += handle.w() + HANDLE_SPACE_PX;
             }
             handleSpans = Map.copyOf(spans);
             place(pos, posImg, posX);
             // Poignée survolée : fond opaque
-            Handle hover = dragHandle != null ? dragHandle
-                    : mouseIn && mouseOnLadder && dragId == null && orderNear(mouseLevel) == null
-                            ? handleNear(mouseLevel) : null;
+            if (idle && mouseIn && mouseOnLadder && hoverOrder == null) hoverHandle = handleNear();
+            Handle hover = dragHandle != null ? dragHandle : hoverHandle;
             for (Handle hd : Handle.values()) {
                 int left = remaining(hd, position);
                 if (left == 0) continue;        // position déjà couverte
@@ -651,28 +713,27 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                         int inside = insideLevel(hd, em.buy);
                         hLine(lvl, colorOf(hd), true, Math.max(2, widthOf(hd)));
                         tag(lvl, left + " " + insideName(hd, em.buy) + "  " + fmt(inside) + "  "
-                                + distance(inside, pos, left, position), false, labelHot);
+                                + distance(inside, pos, left, position), hotFill());
                     } else {
                         Color c = refusal == null ? colorOf(hd) : REFUSED;
                         hLine(lvl, c, true, Math.max(2, widthOf(hd)));
                         tag(lvl, left + " " + hd + "  " + fmt(lvl) + "  " + distance(lvl, pos, left, position)
-                                + (refusal == null ? "" : "  — rejected: " + refusal), false,
-                                refusal == null ? labelHot : REFUSED);
+                                + (refusal == null ? "" : "  — rejected: " + refusal),
+                                refusal == null ? hotFill() : REFUSED);
                     }
                 } else {
-                    Color fill = labelHot;
+                    Color fill = hotFill();
                     if (hd != hover) {      // au repos : opacité du rôle
                         fill = idleFill(opacityOf(hd));
                     }
                     // couverte entre-temps : rien à afficher
                     Span span = spans.get(hd);
-                    if (span != null) place(pos, labelImg(hd.toString(), fill, true), span.left());
+                    if (span != null) place(pos, labelImg(hd.toString(), fill), span.left());
                 }
             }
         }
 
         // 1) Ordres actifs : une sortie s'affiche en TP ou SL ; l'ordre survolé est mis en avant
-        OrderInfo hoverOrder = mouseIn && dragId == null && dragHandle == null ? orderNear(mouseLevel) : null;
         for (OrderInfo o : orders.values()) {
             if (Double.isNaN(orderLevel(o))) continue;      // ordre au marché : pas de ligne
             boolean dragging = moving && o.orderId.equals(dragId);
@@ -687,46 +748,56 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
             hLine(lvl, c, role != null ? dashedOf(role) : stop, hot ? w + 1 : w);
             String dist = role != null ? "  " + distance(lvl, pos, o.unfilled, position) : "";
             tag(lvl, o.unfilled + " " + name + "  " + fmt(lvl) + dist
-                    + (refusal == null ? "" : "  — rejected: " + refusal), false,
-                    refusal != null ? REFUSED : hot ? labelHot : role != null ? idleFill(opacityOf(role)) : labelBg);
+                    + (refusal == null ? "" : "  — rejected: " + refusal),
+                    refusal != null ? REFUSED : hot ? hotFill() : role != null ? idleFill(opacityOf(role)) : labelBg);
         }
 
         // 2) Message de refus encore affiché
         Notice n = notice;
-        if (n != null && System.currentTimeMillis() < n.until()) tag(n.level(), n.text(), false, REFUSED);
-
-        // 3) Crosshair
-        if (mouseIn && dragId == null && dragHandle == null) {
-            hLine(mouseLevel, CROSS, true, 1);
-            if (!mouseOnLadder) {
-                add(heatShapes, h, icon(line(1, heatH, CROSS, false),
-                        px(mouseX), pxY(0), px(mouseX + 1), pxY(heatH)));
-            }
-            priceTag(Math.round(mouseLevel), fmt(Math.round(mouseLevel)), new Color(70, 70, 70));
-        }
+        if (n != null && System.currentTimeMillis() < n.until()) tag(n.level(), n.text(), REFUSED);
 
         for (CanvasShape t : tags) add(ladderShapes, l, t);
+
+        // 3) Crosshair, par-dessus le reste
+        // La cible dessinée, et non une nouvelle lecture de la souris qui a pu bouger pendant le dessin
+        lastHover = hoverOrder != null ? "O" + hoverOrder.orderId : hoverHandle != null ? "H" + hoverHandle : "";
+        redrawCross();
+    }
+
+    /** Crosshair seul : ligne, trait vertical sur la heatmap, prix calé contre la timeline. */
+    private synchronized void redrawCross() {
+        if (disposed || heatW <= 0 || heatH <= 0) return;
+        crossHeat.forEach(heat::removeShape);
+        crossLadder.forEach(ladder::removeShape);
+        crossHeat.clear();
+        crossLadder.clear();
+        if (!mouseIn || dragId != null || dragHandle != null) return;
+        double level = mouseLevel;
+        add(crossHeat, heat, hLineShape(level, CROSS, true, 1));
+        if (!mouseOnLadder) {
+            add(crossHeat, heat, icon(line(1, heatH, CROSS, false), px(mouseX), pxY(0), px(mouseX + 1), pxY(heatH)));
+        }
+        long price = Math.round(level);
+        Img img = labelImg(fmt(price), CROSS_TAG);
+        add(crossLadder, ladder, icon(img.image(), px(0), dataY(price, -img.h() / 2),
+                px(img.w()), dataY(price, img.h() - img.h() / 2)));
     }
 
     private void hLine(double level, Color c, boolean dashed, int thick) {
-        add(heatShapes, heat, icon(line(heatW, thick, c, dashed), px(0), dataY(level, -thick / 2 - (thick % 2)),
-                px(heatW), dataY(level, thick / 2)));
+        add(heatShapes, heat, hLineShape(level, c, dashed, thick));
     }
 
-    /** Étiquette de prix du crosshair, calée contre la timeline. */
-    private void priceTag(double level, String text, Color bg) {
-        Img img = labelImg(text, bg, false);
-        add(ladderShapes, ladder, icon(img.image(), px(0), dataY(level, -img.h() / 2),
-                px(img.w()), dataY(level, img.h() - img.h() / 2)));
+    private CanvasShape hLineShape(double level, Color c, boolean dashed, int thick) {
+        return icon(line(heatW, thick, c, dashed), px(0), dataY(level, -thick / 2 - (thick % 2)),
+                px(heatW), dataY(level, thick / 2));
     }
 
     /**
      * Étiquette à droite de la timeline, décalée à droite si elle en chevauche une autre.
-     * @param big  plus large, pour les poignées
      * @param fill fond de l'étiquette
      */
-    private void tag(double level, String text, boolean big, Color fill) {
-        Img img = labelImg(text, fill, big);
+    private void tag(double level, String text, Color fill) {
+        Img img = labelImg(text, fill);
         int x = tagCenter(img.w()) - img.w() / 2;
         boolean shifted = true;
         while (shifted) {
@@ -755,11 +826,11 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
                 k -> new PreparedImage(dashed ? dashed(w, h, c) : solid(w, h, c)));
     }
 
-    private Img labelImg(String text, Color fill, boolean big) {
+    private Img labelImg(String text, Color fill) {
         if (labelCache.size() > 256) labelCache.clear();
-        String key = fill.getRGB() + "|" + big + "|" + text;
+        String key = fill.getRGB() + "|" + text;
         return labelCache.computeIfAbsent(key, k -> {
-            BufferedImage img = label(text, fill, big);
+            BufferedImage img = label(text, fill);
             return new Img(new PreparedImage(img), img.getWidth(), img.getHeight());
         });
     }
@@ -934,7 +1005,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         return "?";
     }
 
-    private static final Font FONT = uiFont(12f);
+    private static final Font FONT = uiFont(14f);     // Roboto Medium 14, comme Bookmap
 
     /** Police de Bookmap (Roboto), sinon police système. */
     private static Font uiFont(float size) {
@@ -947,13 +1018,13 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
     }
 
     /** Étiquette au style de Bookmap : rectangle arrondi, texte blanc. */
-    private static BufferedImage label(String text, Color fill, boolean big) {
+    private static BufferedImage label(String text, Color fill) {
         BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D pg = probe.createGraphics();
         FontMetrics fm = pg.getFontMetrics(FONT);
         pg.dispose();
-        // Poignées à la même hauteur : elles sont sur la ligne de la position
-        int padX = big ? 12 : 7, padY = 2;
+        // Mêmes dimensions que les étiquettes d'ordres de Bookmap (« 8 LMT » : 52 x 21 px)
+        int padX = 6, padY = 2;
         int w = fm.stringWidth(text) + 2 * padX, h = fm.getHeight() + 2 * padY;
 
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -987,7 +1058,7 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         colors.add(gap());
         colors.add(colorRow(labelBg, LABEL_BG, "Label", c -> { labelBg = c; settingsChanged(); }));
         colors.add(gap());
-        colors.add(colorRow(labelHot, LABEL_BG_HOT, "Label hover", c -> { labelHot = c; settingsChanged(); }));
+        colors.add(colorRow(labelHot, LABEL_BG_HOT, "Label hover", c -> { labelHot = new Color(c.getRGB()); settingsChanged(); }));
 
         JPanel lines = new JPanel(new GridBagLayout());
         lines.setOpaque(false);
