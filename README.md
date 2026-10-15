@@ -8,6 +8,7 @@ Trade Pro adds a position line and draggable take-profit / stop-loss handles to 
 - **TP and SL handles**: two handles sit on the position line, to the left of its label. Drag one and release it to place a limit order (TP) or a stop order (SL) for the part of the position that has no exit order yet. While you drag, the label shows the price and the profit or loss at that price.
 - **Move orders with the mouse**: grab any working order line and release it at the new price. Right-click during the drag to cancel.
 - **Scale in / scale out**: when the position grows or shrinks, the TP and SL placed with the handles take its new size.
+- **Several instruments at once**: enable it on each instrument you trade. Each chart has its own position, handles and settings.
 - **Looks like Bookmap**: labels use Bookmap's own order-label style, and turn blue under the pointer.
 
 Profit and loss is shown in money or in ticks, your choice in the settings. Money needs the instrument's point value: when Bookmap does not know it, ticks are shown.
@@ -16,7 +17,7 @@ Profit and loss is shown in money or in ticks, your choice in the settings. Mone
 
 1. Download the latest jar from the [releases page](https://github.com/superlokki/tradepro/releases).
 2. In Bookmap: Settings > Configure add-ons > **Add**, and pick the jar.
-3. Select **Trade Pro** and tick the checkbox to enable it on the chart.
+3. Select **Trade Pro** and tick the checkbox to enable it on the chart. Repeat for each instrument you want it on.
 
 Trading must be enabled in Bookmap's TCP. Tested on Bookmap 8.0.
 
@@ -30,7 +31,7 @@ Trading must be enabled in Bookmap's TCP. Tested on Bookmap 8.0.
 
 ## Settings
 
-The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, the opacity of the position, TP and SL labels, whether profit and loss is shown in money or in ticks (separately for the position and for TP / SL), and where the labels sit in the right-hand area. Settings are saved with the workspace.
+The add-on's settings panel lets you change the colours (position, TP, SL, labels), the line style and width, the opacity of the position, TP and SL labels, whether profit and loss is shown in money or in ticks (separately for the position and for TP / SL), and where the labels sit in the right-hand area. Settings are saved with the workspace, separately for each instrument. The "About" section shows the Trade Pro version.
 
 ## Building from source
 
