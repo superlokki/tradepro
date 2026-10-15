@@ -23,6 +23,7 @@ import velox.api.layer1.layers.strategies.interfaces.*;
 import velox.api.layer1.layers.strategies.interfaces.CanvasMouseEvent.CoordinateRequestType;
 import velox.api.layer1.layers.strategies.interfaces.ScreenSpaceCanvas.*;
 import velox.api.layer1.layers.strategies.interfaces.ScreenSpaceCanvasFactory.ScreenSpaceCanvasType;
+import velox.api.layer1.messages.indicators.AliasFilter;
 import velox.api.layer1.messages.indicators.Layer1ApiUserMessageModifyScreenSpacePainter;
 import velox.api.layer1.settings.StrategySettingsVersion;
 import velox.api.layer1.simplified.*;
@@ -208,20 +209,31 @@ public class TradePro implements CustomModule, BboListener, OrdersListener, Posi
         posTicks = st.posTicks;
         exitTicks = st.exitTicks;
         running = true;
-        api.sendUserMessage(Layer1ApiUserMessageModifyScreenSpacePainter
-                .builder(TradePro.class, "Trade Pro")
-                .setScreenSpacePainterFactory(this)
-                .setIsAdd(true)
-                .build());
+        api.sendUserMessage(painterMessage(true));
     }
 
     @Override
     public void stop() {
         running = false;
-        api.sendUserMessage(Layer1ApiUserMessageModifyScreenSpacePainter
+        api.sendUserMessage(painterMessage(false));
+    }
+
+    /**
+     * Ajout ou retrait du painter de cet instrument. Une instance par instrument : sans nom propre à l'instrument,
+     * la dernière activée remplaçait le painter des autres, qui ne dessinaient plus rien.
+     */
+    private Layer1ApiUserMessageModifyScreenSpacePainter painterMessage(boolean add) {
+        String own = alias;
+        Layer1ApiUserMessageModifyScreenSpacePainter.Builder b = Layer1ApiUserMessageModifyScreenSpacePainter
                 .builder(TradePro.class, "Trade Pro")
-                .setIsAdd(false)
-                .build());
+                .setAliasFilter(new AliasFilter() {
+                    @Override public boolean isDisplayedForAlias(String a) { return own.equals(a); }
+                })
+                .setIsAdd(add);
+        if (add) b.setScreenSpacePainterFactory(this);
+        Layer1ApiUserMessageModifyScreenSpacePainter msg = b.build();
+        msg.applyNameModifier(own);
+        return msg;
     }
 
     @Override
