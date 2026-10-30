@@ -6,6 +6,7 @@ Trade Pro adds a position line and draggable take-profit / stop-loss handles to 
 
 - **Shows your position**: a line at the average price with a label such as `5 LONG  31310.85  -$41.00` (size, side, price, unrealized PnL).
 - **TP and SL handles**: two handles sit on the position line, to the left of its label. Drag one and release it to place a limit order (TP) or a stop order (SL) for the part of the position that has no exit order yet. While you drag, the label shows the price and the profit or loss at that price.
+- **Break Even (BE) button**: a `BE` button sits to the right of the position label. Click it to place the Stop Loss at the position price (or move and resize the existing Stop Loss to the position price without creating a second order).
 - **Move orders with the mouse**: grab any working order line and release it at the new price. Right-click during the drag to cancel.
 - **Scale in / scale out**: when the position grows or shrinks, the TP and SL placed with the handles take its new size.
 - **Several instruments at once**: enable it on each instrument you trade. Each chart has its own position, handles and settings.
@@ -26,7 +27,7 @@ Trading must be enabled in Bookmap's TCP. Tested on Bookmap 8.0.
 - **Enable it only when you are flat.** Bookmap does not tell an add-on about a position that is already open, so Trade Pro would show wrong sizes.
 - **It does not cancel your TP or SL when the position closes.** Cancel the remaining order yourself, or use Bookmap's Execution Pro add-on ("Cancel All Orders on Flat"), otherwise it can open a new position.
 - **A simple click sends nothing.** You have to drag at least a few pixels. A right-click on a Trade Pro label does nothing either: it never reaches Bookmap, so it cannot place an order.
-- **A handle released on the wrong side of the market** places an order at the best price instead of being rejected: a passive one for a TP (SELL ASK / BUY BID), an immediate exit for an SL (SELL BID / BUY ASK).
+- **A TP or SL released on the wrong side of the market exits at once** instead of being rejected: a limit at the best price, SELL BID for a long, BUY ASK for a short. This works for the handles and for TP / SL orders you drag. A stop order is cancelled first; the limit is sent only once Bookmap confirms the cancel, so a stop filled in the meantime never leads to a second exit.
 - Unsigned add-ons are blocked on Bookmap Data / dxFeed real-time data. Use delayed data, replay, crypto or a broker connection.
 
 ## Settings
