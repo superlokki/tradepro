@@ -9,7 +9,7 @@
 
 Two ways, giving the same result (the jar at the project root, classes in `build/classes`).
 
-With Gradle (9.8.0, downloaded automatically on first run; works with Java 17 to 27):
+With Gradle (9.8.2, downloaded automatically on first run; works with Java 17 to 27):
 
     .\gradlew.bat jar
 
@@ -29,7 +29,7 @@ Jars are named `<username>_<addonName>_<addonVersion>.jar`, for example `BrunoF_
 - Gradle: the version is `version` in `build.gradle`; the username is `addonUser` (or `-PaddonUser=...`).
 - `build.ps1`: use `-Version` and `-User`.
 
-      powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.0.3
+      powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.0.4
 
 Bookmap's servers recognize the exact file that was uploaded. Do not rebuild a version that has already been uploaded or released: raise the version number instead.
 
@@ -46,6 +46,4 @@ There are no automated tests. The add-on is checked by hand in Bookmap, in repla
 
 ## Source layout
 
-- `src/main/java/com/tradepro/TradePro.java`: the add-on (mouse, drawing, orders, settings).
-- `src/main/java/com/tradepro/PositionTracker.java`: position size and average price, from Bookmap's status when the provider sends it, otherwise rebuilt from executions.
-- `src/main/java/com/tradepro/PriceGrid.java`: conversions between prices and price levels, and price formatting.
+- `src/main/java/com/tradepro/TradePro.java`: the add-on (mouse, drawing, orders, settings, position tracking and price grid).
