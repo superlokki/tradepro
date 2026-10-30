@@ -1150,17 +1150,6 @@ public class TradePro
         Color pc = position > 0 ? posColor : shortColor;
         int pw = posWidth;
         hLine(pos, pc, posDashed, pw);
-        if (ladderW > 0) {
-          add(
-              ladderShapes,
-              l,
-              icon(
-                  line(ladderW, pw, pc, false),
-                  px(0),
-                  dataY(pos, -pw / 2 - (pw % 2)),
-                  px(ladderW),
-                  dataY(pos, pw / 2)));
-        }
         // PnL au prix de sortie : bid pour un long, ask pour un short
         String pnl =
             bboKnown()
@@ -1321,7 +1310,7 @@ public class TradePro
         return;
       }
       double level = mouseLevel;
-      add(crossHeat, heat, hLineShape(level, CROSS, true, 1));
+      add(crossHeat, heat, hLineShape(heatW, level, CROSS, true, 1));
       if (!mouseOnLadder) {
         add(
             crossHeat,
@@ -1347,15 +1336,18 @@ public class TradePro
     }
 
     private void hLine(double level, Color c, boolean dashed, int thick) {
-      add(heatShapes, heat, hLineShape(level, c, dashed, thick));
+      add(heatShapes, heat, hLineShape(heatW, level, c, dashed, thick));
+      if (ladderW > 0) {
+        add(ladderShapes, ladder, hLineShape(ladderW, level, c, dashed, thick));
+      }
     }
 
-    private CanvasShape hLineShape(double level, Color c, boolean dashed, int thick) {
+    private CanvasShape hLineShape(int width, double level, Color c, boolean dashed, int thick) {
       return icon(
-          line(heatW, thick, c, dashed),
+          line(width, thick, c, dashed),
           px(0),
           dataY(level, -thick / 2 - (thick % 2)),
-          px(heatW),
+          px(width),
           dataY(level, thick / 2));
     }
 
