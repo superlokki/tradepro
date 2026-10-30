@@ -18,6 +18,7 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,6 +41,7 @@ import javax.swing.JSlider;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.plaf.basic.BasicHTML;
 import velox.api.layer1.annotations.Layer1ApiVersion;
 import velox.api.layer1.annotations.Layer1ApiVersionValue;
@@ -100,7 +102,8 @@ import velox.gui.colors.ColorsConfigItem;
  *   <li>crosshair avec étiquette de prix
  * </ul>
  *
- * <p>Les TP / SL des poignées suivent la taille de la position ; l'add-on ne les annule jamais.
+ * <p>Les TP / SL des poignées suivent la taille de la position et sont annulés à la fermeture ou
+ * au retournement.
  */
 @Layer1SimpleAttachable
 @Layer1StrategyName("Trade Pro")
@@ -303,8 +306,11 @@ public class TradePro
   /** Dernière position traitée, pour repérer un scale in / out. */
   private int lastPosition;
 
-  /** Ordres posés par les poignées : les seuls que l'add-on redimensionne. */
+  /** Ordres posés par les poignées : redimensionnés avec la position, annulés à la fermeture / au reverse. */
   private final Map<String, Boolean> ownOrders = new ConcurrentHashMap<>();
+
+  /** Ordres en cours d'annulation (orderId -> nombre d'essais), masqués et relancés si un resize était en vol. */
+  private final Map<String, Integer> cancellingOrders = new ConcurrentHashMap<>();
 
   /**
    * Stops lâchés du mauvais côté, en cours d'annulation : orderId -> taille de la sortie à envoyer
@@ -317,6 +323,22 @@ public class TradePro
 
   /** Dernier envoi ou déplacement d'un SL au break-even. */
   private volatile long beSentAt;
+
+  /**
+   * Regroupe les exécutions partielles (60 ms) avant de redimensionner les TP / SL, pour éviter de
+   * les redimensionner sur les fills intermédiaires d'un Reverse.
+   */
+  private final Timer resizeTimer =
+      new Timer(
+          60,
+          e -> {
+            resizeOwnOrders();
+            redrawAll();
+          });
+
+  {
+    resizeTimer.setRepeats(false);
+  }
 
   /** Une vue par painter : Bookmap en recrée un à chaque rechargement du chart. */
   private final List<View> views = new CopyOnWriteArrayList<>();
@@ -372,7 +394,10 @@ public class TradePro
     tracker.reset();
     lastPosition = 0;
     ownOrders.clear();
+    cancellingOrders.clear();
     pendingExits.clear();
+    resizeTimer.stop();
+    Arrays.fill(sentAt, 0);
     beSentAt = 0;
     bestBid = Integer.MIN_VALUE;
     bestAsk = Integer.MAX_VALUE;
@@ -409,6 +434,7 @@ public class TradePro
   @Override
   public void stop() {
     running = false;
+    resizeTimer.stop();
     api.sendUserMessage(painterMessage(false));
   }
 
@@ -475,17 +501,36 @@ public class TradePro
     }
     if (update.status != null && update.status.isActive()) {
       orders.put(update.orderId, update);
-      if (isHandleClientId(update.clientId)) {
-        ownOrders.put(update.orderId, Boolean.TRUE);
-      }
-      for (Handle h : Handle.values()) {
-        if (update.clientId != null && update.clientId.startsWith(h.prefix())) {
-          sentAt[h.ordinal()] = 0;
+      Integer tries = cancellingOrders.get(update.orderId);
+      if (tries != null) {
+        if (update.status == OrderStatus.WORKING && tries < 5) {
+          cancellingOrders.put(update.orderId, tries + 1);
+          api.updateOrder(new OrderCancelParameters(update.orderId));
+        }
+      } else {
+        int pos = position();
+        Handle role = roleOf(update, pos);
+        boolean handleOrder =
+            isHandleClientId(update.clientId)
+                || (role != null
+                    && System.currentTimeMillis() - sentAt[role.ordinal()] < SENT_HIDE_MS);
+        if (handleOrder) {
+          if (pos == 0 || update.isBuy != (pos < 0)) {
+            cancelOwnOrder(update.orderId);
+          } else {
+            ownOrders.put(update.orderId, Boolean.TRUE);
+          }
+        }
+        for (Handle h : Handle.values()) {
+          if (update.clientId != null && update.clientId.startsWith(h.prefix())) {
+            sentAt[h.ordinal()] = 0;
+          }
         }
       }
     } else {
       orders.remove(update.orderId);
       ownOrders.remove(update.orderId);
+      cancellingOrders.remove(update.orderId);
       beSentAt = 0;
       for (Handle h : Handle.values()) {
         if (update.clientId != null && update.clientId.startsWith(h.prefix())) {
@@ -546,8 +591,8 @@ public class TradePro
   }
 
   /**
-   * Scale in / out : les TP / SL des poignées prennent la nouvelle taille. Rien à la fermeture ni
-   * au retournement.
+   * Fermeture ou retournement : annule les TP / SL de la position précédente. Scale in / out :
+   * ajuste leur taille après stabilisation des exécutions partielles.
    */
   private synchronized void positionMayHaveChanged() {
     int now = position();
@@ -556,15 +601,55 @@ public class TradePro
       return;
     }
     lastPosition = now;
-    if (!running || now == 0 || before == 0 || (now > 0) != (before > 0)) {
+    if (!running) {
+      resizeTimer.stop();
+      return;
+    }
+    for (String orderId : new ArrayList<>(ownOrders.keySet())) {
+      OrderInfo order = orders.get(orderId);
+      if (order == null || now == 0 || order.isBuy != (now < 0)) {
+        cancelOwnOrder(orderId);
+      }
+    }
+    if (now == 0 || before == 0 || (now > 0) != (before > 0)) {
       beSentAt = 0;
+      Arrays.fill(sentAt, 0);
+      resizeTimer.stop();
+      return;
+    }
+    resizeTimer.restart();
+  }
+
+  private void cancelOwnOrder(String orderId) {
+    ownOrders.remove(orderId);
+    if (!orders.containsKey(orderId) || cancellingOrders.containsKey(orderId)) {
+      return;
+    }
+    cancellingOrders.put(orderId, 1);
+    api.updateOrder(new OrderCancelParameters(orderId));
+    Log.info("Trade Pro: " + orderId + " cancelled (position closed or reversed)");
+  }
+
+  private synchronized void resizeOwnOrders() {
+    if (!running) {
+      return;
+    }
+    int now = position();
+    if (now == 0) {
       return;
     }
     int size = Math.abs(now);
     double posLvl = positionLevel();
-    for (String orderId : ownOrders.keySet()) {
+    for (String orderId : new ArrayList<>(ownOrders.keySet())) {
       OrderInfo order = orders.get(orderId);
-      if (order == null || roleOf(order, now) == null || order.unfilled == size) {
+      if (order == null || cancellingOrders.containsKey(orderId)) {
+        continue;
+      }
+      if (order.isBuy != (now < 0)) {
+        cancelOwnOrder(orderId);
+        continue;
+      }
+      if (roleOf(order, now) == null || order.unfilled == size) {
         continue;
       }
       if (roleOf(order, now) == Handle.SL
@@ -633,7 +718,7 @@ public class TradePro
     }
     int covered = 0;
     for (OrderInfo order : orders.values()) {
-      if (roleOf(order, position) == handle) {
+      if (!cancellingOrders.containsKey(order.orderId) && roleOf(order, position) == handle) {
         covered += order.unfilled;
       }
     }
@@ -651,7 +736,7 @@ public class TradePro
     long beLevel = Math.round(pos);
     int coveredAtBe = 0;
     for (OrderInfo order : orders.values()) {
-      if (roleOf(order, position) == Handle.SL) {
+      if (!cancellingOrders.containsKey(order.orderId) && roleOf(order, position) == Handle.SL) {
         if (Math.round(orderLevel(order)) != beLevel) {
           return true;
         }
@@ -1035,7 +1120,7 @@ public class TradePro
       OrderInfo best = null;
       double bestDist = mouseOnLadder ? LABEL_GRAB_PX : GRAB_PX;
       for (OrderInfo order : orders.values()) {
-        if (modeOf(order) == null) {
+        if (cancellingOrders.containsKey(order.orderId) || modeOf(order) == null) {
           continue;
         }
         double dist = pxFromMouse(orderLevel(order));
@@ -1244,8 +1329,8 @@ public class TradePro
 
       // 1) Ordres actifs : une sortie s'affiche en TP ou SL ; l'ordre survolé est mis en avant
       for (OrderInfo order : orders.values()) {
-        if (Double.isNaN(orderLevel(order))) {
-          continue; // ordre au marché : pas de ligne
+        if (cancellingOrders.containsKey(order.orderId) || Double.isNaN(orderLevel(order))) {
+          continue; // ordre au marché ou en cours d'annulation : pas de ligne
         }
         boolean dragging = moving && order.orderId.equals(dragId);
         boolean hot =
@@ -1472,7 +1557,7 @@ public class TradePro
     int size = Math.abs(pos);
     OrderInfo existingSl = null;
     for (OrderInfo order : orders.values()) {
-      if (roleOf(order, pos) == Handle.SL) {
+      if (!cancellingOrders.containsKey(order.orderId) && roleOf(order, pos) == Handle.SL) {
         existingSl = order;
         break;
       }
